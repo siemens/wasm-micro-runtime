@@ -1690,7 +1690,15 @@ aot_create_stack_sizes(const AOTCompData *comp_data, AOTCompContext *comp_ctx)
      * avoid creating extra relocations in the precheck functions.
      */
     LLVMSetLinkage(stack_sizes, LLVMInternalLinkage);
-    LLVMSetSection(stack_sizes, aot_stack_sizes_section_name);
+    /*
+     * for AOT, place it into a dedicated section for the convenience
+     * of the AOT file generation and symbol resolutions.
+     *
+     * for JIT, it doesn't matter.
+     */
+    if (!comp_ctx->is_jit_mode) {
+        LLVMSetSection(stack_sizes, aot_stack_sizes_section_name);
+    }
     comp_ctx->stack_sizes_type = stack_sizes_type;
     comp_ctx->stack_sizes = stack_sizes;
     return true;
@@ -2782,6 +2790,15 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
                 bh_assert(vendor_sys);
                 bh_memcpy_s(default_arch, sizeof(default_arch), default_triple,
                             (uint32)(vendor_sys - default_triple));
+                /**
+                 * On Mac M[1-9]+ LLVM will report arm64 as the
+                 * architecture, for the purposes of wamr this is the
+                 * same as aarch64v8 so we'll normalize it here.
+                 */
+                if (!strcmp(default_arch, "arm64")) {
+                    bh_strcpy_s(default_arch, sizeof(default_arch),
+                                "aarch64v8");
+                }
                 arch1 = default_arch;
 
                 LLVMDisposeMessage(default_triple);
@@ -2952,12 +2969,12 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
                                     sizeof(comp_ctx->target_arch));
 
         if (option->bounds_checks == 1 || option->bounds_checks == 0) {
-            /* Set by user */
+            /* Set by the user */
             comp_ctx->enable_bound_check =
                 (option->bounds_checks == 1) ? true : false;
         }
         else {
-            /* Unset by user, use default value */
+            /* Unset by the user, use the default value */
             if (strstr(comp_ctx->target_arch, "64")
                 && !option->is_sgx_platform) {
                 comp_ctx->enable_bound_check = false;
@@ -2967,16 +2984,16 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
             }
         }
 
-        if (comp_ctx->enable_bound_check) {
-            /* Always enable stack boundary check if `bounds-checks`
-               is enabled */
-            comp_ctx->enable_stack_bound_check = true;
-        }
-        else {
-            /* When `bounds-checks` is disabled, we set stack boundary
-               check status according to the input option */
+        if (option->stack_bounds_checks == 1
+            || option->stack_bounds_checks == 0) {
+            /* Set by the user */
             comp_ctx->enable_stack_bound_check =
                 (option->stack_bounds_checks == 1) ? true : false;
+        }
+        else {
+            /* Unset by the user, use the default value, it will be the same
+             * value as the bound check */
+            comp_ctx->enable_stack_bound_check = comp_ctx->enable_bound_check;
         }
 
         if ((comp_ctx->enable_stack_bound_check
@@ -3105,6 +3122,16 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
     if (!option->enable_simd && wasm_module->is_simd_used) {
         aot_set_last_error("SIMD is disabled by --disable-simd but SIMD "
                            "instructions are used in this module");
+        goto fail;
+    }
+
+    /* Return error if ref-types and GC are disabled by command line but
+       ref-types instructions are used */
+    if (!option->enable_ref_types && !option->enable_gc
+        && wasm_module->is_ref_types_used) {
+        aot_set_last_error("ref-types instruction was found, "
+                           "try removing --disable-ref-types option "
+                           "or adding --enable-gc option.");
         goto fail;
     }
 
