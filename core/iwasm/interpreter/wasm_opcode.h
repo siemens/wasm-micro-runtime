@@ -20,11 +20,14 @@ typedef enum WASMOpcode {
     WASM_OP_LOOP = 0x03,        /* loop */
     WASM_OP_IF = 0x04,          /* if */
     WASM_OP_ELSE = 0x05,        /* else */
+    /*TODO Deprecate WASM_OP_TRY*/
     WASM_OP_TRY = 0x06,         /* try */
     WASM_OP_CATCH = 0x07,       /* catch* */
     WASM_OP_THROW = 0x08,       /* throw of a try catch */
+    /*TODO Deprecate WASM_OP_RETHROW*/
     WASM_OP_RETHROW = 0x09,     /* rethrow of a try catch */
     WASM_OP_UNUSED_0x0a = 0x0a,
+    /*TODO WASM_OP_THROW_REF = 0x0a,    /* Pops an 'exnref' from the stack and throws it */
 
     WASM_OP_END = 0x0b,                  /* end */
     WASM_OP_BR = 0x0c,                   /* br */
@@ -52,6 +55,7 @@ typedef enum WASMOpcode {
     WASM_OP_GET_GLOBAL_64 = 0x1d,
     WASM_OP_SET_GLOBAL_64 = 0x1e,
     WASM_OP_SET_GLOBAL_AUX_STACK = 0x1f,
+    /*WASM_OP_TRY_TABLE = 0x1f,             /* begins a block which can handle thrown exceptions*/
 
     /* variable instructions */
     WASM_OP_GET_LOCAL = 0x20,  /* get_local */
