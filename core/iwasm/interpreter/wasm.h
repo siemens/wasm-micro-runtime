@@ -192,9 +192,15 @@ typedef void *table_elem_type_t;
 #define LABEL_TYPE_IF 2
 #define LABEL_TYPE_FUNCTION 3
 #if WASM_ENABLE_EXCE_HANDLING != 0
-#define LABEL_TYPE_TRY 4
-#define LABEL_TYPE_CATCH 5
-#define LABEL_TYPE_CATCH_ALL 6
+#define LABEL_TYPE_TRY 4        /* deprecated */
+#define LABEL_TYPE_CATCH 5      /* deprecated */
+#define LABEL_TYPE_CATCH_ALL 6  /* deprecated */
+#define LABEL_TYPE_TRY_TABLE 7
+
+#define EXCN_HANDLER_CLAUSE_CATCH 0
+#define EXCN_HANDLER_CLAUSE_CATCH_REF 1
+#define EXCN_HANDLER_CLAUSE_CATCH_ALL 2
+#define EXCN_HANDLER_CLAUSE_CATCH_ALL_REF 3
 #endif
 
 #define WASM_TYPE_FUNC 0
