@@ -7065,6 +7065,69 @@ wasm_loader_find_block_addr(WASMExecEnv *exec_env, BlockAddr *block_addr_cache,
                             (uint8 *)(p - 1);
                 }
                 break;
+            case WASM_OP_TRY_TABLE:
+            {
+                LOG_VERBOSE("In %s, parsing the TRY_TABLE opcode\n",
+                    __FUNCTION__);
+
+
+                /* block result type: 0x40/0x7F/0x7E/0x7D/0x7C */
+                u8 = read_uint8(p);
+                if (is_byte_a_type(u8)) {
+#if WASM_ENABLE_GC != 0
+                    if (wasm_is_type_multi_byte_type(u8)) {
+                        /* the possible extra bytes of GC ref type have been
+                           modified to OP_NOP, no need to resolve them again */
+                    }
+#endif
+                }
+                else {
+                    p--;
+                    /* block type */
+                    skip_leb_int32(p, p_end);
+                }
+                if (block_nested_depth
+                    < sizeof(block_stack) / sizeof(BlockAddr)) {
+                    block_stack[block_nested_depth].start_addr = p;
+                    block_stack[block_nested_depth].else_addr = NULL;
+                }
+                block_nested_depth++;
+
+                uint32 handler_count;
+                uint32 handler_clause;
+                uint32 handler_tagindex;
+                uint32 handler_targetlabel;
+                read_leb_int32(p, p_end, handler_count);
+                for (i=0; i<handler_count; i++) {
+                    read_leb_int32(p, p_end, handler_clause);
+                    switch (handler_clause) {
+                        case EXCN_HANDLER_CLAUSE_CATCH: // catch
+                        case EXCN_HANDLER_CLAUSE_CATCH_REF: // catch_ref
+                            read_leb_int32(p, p_end, handler_tagindex);
+                            read_leb_int32(p, p_end, handler_targetlabel);
+                            LOG_VERBOSE("In %s, found handler clause %d for tagindex %d targetlabel %d\n",
+                                __FUNCTION__,
+                                handler_clause,
+                                handler_tagindex,
+                                handler_targetlabel);
+                            break;
+                        case EXCN_HANDLER_CLAUSE_CATCH_ALL: // catch_all
+                        case EXCN_HANDLER_CLAUSE_CATCH_ALL_REF: // catch_all_ref
+                            read_leb_int32(p, p_end, handler_targetlabel);
+                            LOG_VERBOSE("In %s, found handler clause %d targetlabel %d\n",
+                                __FUNCTION__,
+                                handler_clause,
+                                handler_targetlabel);
+                            break;
+                        default:
+                            set_error_buf(error_buf, error_buf_size,
+                                "invalid handler clause");
+                            goto fail;                        
+                            break;
+                        }
+                }
+                break;
+            }
 #endif /* end of WASM_ENABLE_EXCE_HANDLING != 0 */
 
             case WASM_OP_BLOCK:
@@ -11020,8 +11083,9 @@ re_scan:
                 goto handle_op_block_and_loop;
             }
             case WASM_OP_BLOCK:
-            case WASM_OP_LOOP:
+            case WASM_OP_LOOP:            
 #if WASM_ENABLE_EXCE_HANDLING != 0
+            case WASM_OP_TRY_TABLE:
             case WASM_OP_TRY:
                 if (opcode == WASM_OP_TRY) {
                     /*
@@ -11138,6 +11202,46 @@ re_scan:
                 }
 #endif
 
+#if WASM_ENABLE_EXCE_HANDLING != 0
+                if (opcode == WASM_OP_TRY_TABLE) {
+                    LOG_VERBOSE("In %s, parsing the TRY_TABLE opcode\n",
+                        __FUNCTION__);
+
+                    uint32 handler_count;
+                    uint32 handler_clause;
+                    uint32 handler_tagindex;
+                    uint32 handler_targetlabel;
+                    read_leb_int32(p, p_end, handler_count);
+                    for (i=0; i<handler_count; i++) {
+                        read_leb_int32(p, p_end, handler_clause);
+                        switch (handler_clause) {
+                            case EXCN_HANDLER_CLAUSE_CATCH: // catch
+                            case EXCN_HANDLER_CLAUSE_CATCH_REF: // catch_ref
+                                read_leb_int32(p, p_end, handler_tagindex);
+                                read_leb_int32(p, p_end, handler_targetlabel);
+                                LOG_VERBOSE("In %s, found handler clause %d for tagindex %d targetlabel %d\n",
+                                    __FUNCTION__,
+                                    handler_clause,
+                                    handler_tagindex,
+                                    handler_targetlabel);
+                                break;
+                            case EXCN_HANDLER_CLAUSE_CATCH_ALL: // catch_all
+                            case EXCN_HANDLER_CLAUSE_CATCH_ALL_REF: // catch_all_ref
+                                read_leb_int32(p, p_end, handler_targetlabel);
+                                LOG_VERBOSE("In %s, found handler clause %d targetlabel %d\n",
+                                    __FUNCTION__,
+                                    handler_clause,
+                                    handler_targetlabel);
+                                break;
+                            default:
+                                set_error_buf(error_buf, error_buf_size,
+                                    "invalid handler clause");
+                                goto fail;                        
+                                break;
+                            }
+                    }
+                }
+#endif
                 /* Pop block parameters from stack */
                 if (BLOCK_HAS_PARAM(block_type)) {
                     WASMFuncType *wasm_type = block_type.u.type;

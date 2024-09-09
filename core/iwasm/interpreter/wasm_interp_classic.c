@@ -2026,6 +2026,52 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                 POP_CSP();
                 HANDLE_OP_END();
             }
+            HANDLE_OP(WASM_OP_TRY_TABLE)
+            {
+                value_type = *frame_ip++;
+                param_cell_num = 0;
+                cell_num = wasm_value_type_cell_num(value_type);
+
+                uint32 handler_count;
+                uint32 handler_clause;
+                uint32 handler_tagindex;
+                uint32 handler_targetlabel;
+                read_leb_int32(frame_ip, frame_ip_end, handler_count);
+                for (i=0; i<handler_count; i++) {
+                    read_leb_int32(frame_ip, frame_ip_end, handler_clause);
+                    switch (handler_clause) {
+                        case EXCN_HANDLER_CLAUSE_CATCH: // catch
+                        case EXCN_HANDLER_CLAUSE_CATCH_REF: // catch_ref
+                            read_leb_int32(frame_ip, frame_ip_end, handler_tagindex);
+                            read_leb_int32(frame_ip, frame_ip_end, handler_targetlabel);
+                            LOG_VERBOSE("In %s, found handler clause %d for tagindex %d targetlabel %d\n",
+                                __FUNCTION__,
+                                handler_clause,
+                                handler_tagindex,
+                                handler_targetlabel);
+                            break;
+                        case EXCN_HANDLER_CLAUSE_CATCH_ALL: // catch_all
+                        case EXCN_HANDLER_CLAUSE_CATCH_ALL_REF: // catch_all_ref
+                            read_leb_int32(frame_ip, frame_ip_end, handler_targetlabel);
+                            LOG_VERBOSE("In %s, found handler clause %d targetlabel %d\n",
+                                __FUNCTION__,
+                                handler_clause,
+                                handler_targetlabel);
+                            break;
+                        default:
+                            wasm_set_exception(module,
+                                "try_table has an "
+                                "unexpected handler clause");
+                            goto got_exception;                    
+                            break;
+                        }
+                }
+
+                /* to be improved: end_addr*/
+                PUSH_CSP(LABEL_TYPE_TRY_TABLE, param_cell_num, cell_num, NULL /* end_addr */);
+
+                HANDLE_OP_END();
+            }
 #endif /* end of WASM_ENABLE_EXCE_HANDLING != 0 */
             HANDLE_OP(EXT_OP_BLOCK)
             {
