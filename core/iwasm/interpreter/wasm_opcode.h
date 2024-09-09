@@ -20,8 +20,8 @@ typedef enum WASMOpcode {
     WASM_OP_LOOP = 0x03,        /* loop */
     WASM_OP_IF = 0x04,          /* if */
     WASM_OP_ELSE = 0x05,        /* else */
-    WASM_OP_TRY = 0x06,         /* try */
-    WASM_OP_CATCH = 0x07,       /* catch* */
+    WASM_OP_TRY = 0x06,         /* deprecated: try */
+    WASM_OP_CATCH = 0x07,       /* deprecated: catch */
     WASM_OP_THROW = 0x08,       /* throw of a try catch */
     WASM_OP_RETHROW = 0x09,     /* rethrow of a try catch */
     WASM_OP_UNUSED_0x0a = 0x0a,
@@ -41,7 +41,7 @@ typedef enum WASMOpcode {
     WASM_OP_UNUSED_0x16 = 0x16,
     WASM_OP_UNUSED_0x17 = 0x17,
 
-    WASM_OP_DELEGATE = 0x18,  /* delegate block of the try catch*/
+    WASM_OP_DELEGATE = 0x18,              /* deprecated: delegate */
     WASM_OP_CATCH_ALL = 0x19, /* a catch_all handler in a try block */
 
     /* parametric instructions */
@@ -51,7 +51,7 @@ typedef enum WASMOpcode {
 
     WASM_OP_GET_GLOBAL_64 = 0x1d,
     WASM_OP_SET_GLOBAL_64 = 0x1e,
-    WASM_OP_SET_GLOBAL_AUX_STACK = 0x1f,
+    WASM_OP_TRY_TABLE = 0x1f,            /* try_table */
 
     /* variable instructions */
     WASM_OP_GET_LOCAL = 0x20,  /* get_local */
@@ -62,7 +62,8 @@ typedef enum WASMOpcode {
 
     WASM_OP_TABLE_GET = 0x25, /* table.get */
     WASM_OP_TABLE_SET = 0x26, /* table.set */
-    WASM_OP_UNUSED_0x27 = 0x27,
+    WASM_OP_SET_GLOBAL_AUX_STACK = 0x27,    /* used internally by aot compiler */
+
 
     /* memory instructions */
     WASM_OP_I32_LOAD = 0x28,     /* i32.load */
@@ -827,7 +828,7 @@ typedef enum WASMAtomicEXTOpcode {
         HANDLE_OPCODE(WASM_OP_SELECT_T),             /* 0x1c */ \
         HANDLE_OPCODE(WASM_OP_GET_GLOBAL_64),        /* 0x1d */ \
         HANDLE_OPCODE(WASM_OP_SET_GLOBAL_64),        /* 0x1e */ \
-        HANDLE_OPCODE(WASM_OP_SET_GLOBAL_AUX_STACK), /* 0x1f */ \
+        HANDLE_OPCODE(WASM_OP_TRY_TABLE),            /* 0x1f */ \
         HANDLE_OPCODE(WASM_OP_GET_LOCAL),            /* 0x20 */ \
         HANDLE_OPCODE(WASM_OP_SET_LOCAL),            /* 0x21 */ \
         HANDLE_OPCODE(WASM_OP_TEE_LOCAL),            /* 0x22 */ \
@@ -835,7 +836,7 @@ typedef enum WASMAtomicEXTOpcode {
         HANDLE_OPCODE(WASM_OP_SET_GLOBAL),           /* 0x24 */ \
         HANDLE_OPCODE(WASM_OP_TABLE_GET),            /* 0x25 */ \
         HANDLE_OPCODE(WASM_OP_TABLE_SET),            /* 0x26 */ \
-        HANDLE_OPCODE(WASM_OP_UNUSED_0x27),          /* 0x27 */ \
+        HANDLE_OPCODE(WASM_OP_SET_GLOBAL_AUX_STACK), /* 0x27 */ \
         HANDLE_OPCODE(WASM_OP_I32_LOAD),             /* 0x28 */ \
         HANDLE_OPCODE(WASM_OP_I64_LOAD),             /* 0x29 */ \
         HANDLE_OPCODE(WASM_OP_F32_LOAD),             /* 0x2a */ \
