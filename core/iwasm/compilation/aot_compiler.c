@@ -337,6 +337,10 @@ aot_gen_commit_values(AOTCompFrame *frame)
     LLVMValueRef value;
     uint32 n;
 
+    if (!frame->comp_ctx->call_stack_features.values) {
+        return true;
+    }
+
     /* First, commit reference flags
      * For LLVM JIT, iterate all local and stack ref flags
      * For AOT, ignore local(params + locals) ref flags */
@@ -570,6 +574,46 @@ aot_gen_commit_values(AOTCompFrame *frame)
 }
 
 bool
+aot_gen_commit_ip(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+                  LLVMValueRef ip_value, bool is_64bit)
+{
+    LLVMValueRef cur_frame = func_ctx->cur_frame;
+    LLVMValueRef value_offset, value_addr, value_ptr;
+    uint32 offset_ip;
+
+    if (!comp_ctx->is_jit_mode)
+        offset_ip = comp_ctx->pointer_size * 4;
+    else
+        offset_ip = offsetof(WASMInterpFrame, ip);
+
+    if (!(value_offset = I32_CONST(offset_ip))) {
+        aot_set_last_error("llvm build const failed");
+        return false;
+    }
+
+    if (!(value_addr =
+              LLVMBuildInBoundsGEP2(comp_ctx->builder, INT8_TYPE, cur_frame,
+                                    &value_offset, 1, "ip_addr"))) {
+        aot_set_last_error("llvm build in bounds gep failed");
+        return false;
+    }
+
+    if (!(value_ptr = LLVMBuildBitCast(
+              comp_ctx->builder, value_addr,
+              is_64bit ? INT64_PTR_TYPE : INT32_PTR_TYPE, "ip_ptr"))) {
+        aot_set_last_error("llvm build bit cast failed");
+        return false;
+    }
+
+    if (!LLVMBuildStore(comp_ctx->builder, ip_value, value_ptr)) {
+        aot_set_last_error("llvm build store failed");
+        return false;
+    }
+
+    return true;
+}
+
+bool
 aot_gen_commit_sp_ip(AOTCompFrame *frame, bool commit_sp, bool commit_ip)
 {
     AOTCompContext *comp_ctx = frame->comp_ctx;
@@ -577,40 +621,19 @@ aot_gen_commit_sp_ip(AOTCompFrame *frame, bool commit_sp, bool commit_ip)
     LLVMValueRef cur_frame = func_ctx->cur_frame;
     LLVMValueRef value_offset, value_addr, value_ptr, value;
     LLVMTypeRef int8_ptr_ptr_type;
-    uint32 offset_ip, offset_sp, n;
+    uint32 offset_sp, n;
     bool is_64bit = (comp_ctx->pointer_size == sizeof(uint64)) ? true : false;
     const AOTValueSlot *sp = frame->sp;
     const uint8 *ip = frame->frame_ip;
 
     if (!comp_ctx->is_jit_mode) {
-        offset_ip = frame->comp_ctx->pointer_size * 4;
         offset_sp = frame->comp_ctx->pointer_size * 5;
     }
     else {
-        offset_ip = offsetof(WASMInterpFrame, ip);
         offset_sp = offsetof(WASMInterpFrame, sp);
     }
 
-    if (commit_ip) {
-        if (!(value_offset = I32_CONST(offset_ip))) {
-            aot_set_last_error("llvm build const failed");
-            return false;
-        }
-
-        if (!(value_addr =
-                  LLVMBuildInBoundsGEP2(comp_ctx->builder, INT8_TYPE, cur_frame,
-                                        &value_offset, 1, "ip_addr"))) {
-            aot_set_last_error("llvm build in bounds gep failed");
-            return false;
-        }
-
-        if (!(value_ptr = LLVMBuildBitCast(
-                  comp_ctx->builder, value_addr,
-                  is_64bit ? INT64_PTR_TYPE : INT32_PTR_TYPE, "ip_ptr"))) {
-            aot_set_last_error("llvm build bit cast failed");
-            return false;
-        }
-
+    if (commit_ip && comp_ctx->call_stack_features.ip) {
         if (!comp_ctx->is_jit_mode) {
             WASMModule *module = comp_ctx->comp_data->wasm_module;
             if (is_64bit)
@@ -630,13 +653,12 @@ aot_gen_commit_sp_ip(AOTCompFrame *frame, bool commit_sp, bool commit_ip)
             return false;
         }
 
-        if (!LLVMBuildStore(comp_ctx->builder, value, value_ptr)) {
-            aot_set_last_error("llvm build store failed");
+        if (!aot_gen_commit_ip(comp_ctx, func_ctx, value, is_64bit)) {
             return false;
         }
     }
 
-    if (commit_sp) {
+    if (commit_sp && comp_ctx->call_stack_features.values) {
         n = (uint32)(sp - frame->lp);
         value = I32_CONST(offset_of_local(comp_ctx, n));
         if (!value) {
