@@ -7003,6 +7003,8 @@ wasm_loader_find_block_addr(WASMExecEnv *exec_env, BlockAddr *block_addr_cache,
 #if WASM_ENABLE_DEBUG_INTERP != 0
     op_break_retry:
 #endif
+        LOG_REE("[0x%x]", opcode);
+
         switch (opcode) {
             case WASM_OP_UNREACHABLE:
             case WASM_OP_NOP:
@@ -7067,9 +7069,8 @@ wasm_loader_find_block_addr(WASMExecEnv *exec_env, BlockAddr *block_addr_cache,
                 break;
             case WASM_OP_TRY_TABLE:
             {
-                LOG_VERBOSE("In %s, parsing the TRY_TABLE opcode\n",
+                LOG_REE("In %s, parsing the TRY_TABLE opcode\n",
                     __FUNCTION__);
-
 
                 /* block result type: 0x40/0x7F/0x7E/0x7D/0x7C */
                 u8 = read_uint8(p);
@@ -7095,29 +7096,17 @@ wasm_loader_find_block_addr(WASMExecEnv *exec_env, BlockAddr *block_addr_cache,
 
                 uint32 handler_count;
                 uint32 handler_clause;
-                uint32 handler_tagindex;
-                uint32 handler_targetlabel;
                 read_leb_int32(p, p_end, handler_count);
                 for (i=0; i<handler_count; i++) {
                     read_leb_int32(p, p_end, handler_clause);
                     switch (handler_clause) {
-                        case EXCN_HANDLER_CLAUSE_CATCH: // catch
-                        case EXCN_HANDLER_CLAUSE_CATCH_REF: // catch_ref
-                            read_leb_int32(p, p_end, handler_tagindex);
-                            read_leb_int32(p, p_end, handler_targetlabel);
-                            LOG_VERBOSE("In %s, found handler clause %d for tagindex %d targetlabel %d\n",
-                                __FUNCTION__,
-                                handler_clause,
-                                handler_tagindex,
-                                handler_targetlabel);
-                            break;
-                        case EXCN_HANDLER_CLAUSE_CATCH_ALL: // catch_all
-                        case EXCN_HANDLER_CLAUSE_CATCH_ALL_REF: // catch_all_ref
-                            read_leb_int32(p, p_end, handler_targetlabel);
-                            LOG_VERBOSE("In %s, found handler clause %d targetlabel %d\n",
-                                __FUNCTION__,
-                                handler_clause,
-                                handler_targetlabel);
+                        case EXCN_HANDLER_CLAUSE_CATCH:
+                        case EXCN_HANDLER_CLAUSE_CATCH_REF:
+                            skip_leb_int32(p, p_end); /* skip over tagindex*/
+                            /* intentional overflow */
+                        case EXCN_HANDLER_CLAUSE_CATCH_ALL:
+                        case EXCN_HANDLER_CLAUSE_CATCH_ALL_REF:
+                            skip_leb_int32(p, p_end); /* skip over label */
                             break;
                         default:
                             set_error_buf(error_buf, error_buf_size,
@@ -7134,6 +7123,9 @@ wasm_loader_find_block_addr(WASMExecEnv *exec_env, BlockAddr *block_addr_cache,
             case WASM_OP_LOOP:
             case WASM_OP_IF:
             {
+                LOG_REE("In %s, parsing the %d opcode\n",
+                    __FUNCTION__, opcode);
+
                 /* block result type: 0x40/0x7F/0x7E/0x7D/0x7C */
                 u8 = read_uint8(p);
                 if (is_byte_a_type(u8)) {
@@ -7181,6 +7173,9 @@ wasm_loader_find_block_addr(WASMExecEnv *exec_env, BlockAddr *block_addr_cache,
                 break;
 
             case WASM_OP_END:
+                LOG_REE("In %s, parsing the END opcode\n",
+                    __FUNCTION__);
+
                 if (block_nested_depth == 1) {
                     if (label_type == LABEL_TYPE_IF)
                         *p_else_addr = else_addr;
@@ -11110,6 +11105,7 @@ re_scan:
             {
                 uint8 value_type;
                 BlockType block_type;
+                uint8 label_type = LABEL_TYPE_BLOCK + (opcode - WASM_OP_BLOCK);
 #if WASM_ENABLE_FAST_INTERP != 0
                 uint32 available_params = 0;
 #endif
@@ -11204,34 +11200,99 @@ re_scan:
 
 #if WASM_ENABLE_EXCE_HANDLING != 0
                 if (opcode == WASM_OP_TRY_TABLE) {
-                    LOG_VERBOSE("In %s, parsing the TRY_TABLE opcode\n",
+                    /* fix label_type to LABEL_TYPE_TRY_TABLE */
+                    label_type = LABEL_TYPE_TRY_TABLE;
+                    LOG_REE("In %s, parsing the TRY_TABLE opcode\n",
                         __FUNCTION__);
 
                     uint32 handler_count;
                     uint32 handler_clause;
-                    uint32 handler_tagindex;
-                    uint32 handler_targetlabel;
+                    uint32 tag_index;
+                    uint32 depth;
                     read_leb_int32(p, p_end, handler_count);
                     for (i=0; i<handler_count; i++) {
                         read_leb_int32(p, p_end, handler_clause);
                         switch (handler_clause) {
-                            case EXCN_HANDLER_CLAUSE_CATCH: // catch
-                            case EXCN_HANDLER_CLAUSE_CATCH_REF: // catch_ref
-                                read_leb_int32(p, p_end, handler_tagindex);
-                                read_leb_int32(p, p_end, handler_targetlabel);
-                                LOG_VERBOSE("In %s, found handler clause %d for tagindex %d targetlabel %d\n",
+                            case EXCN_HANDLER_CLAUSE_CATCH:
+                            case EXCN_HANDLER_CLAUSE_CATCH_REF:
+                                read_leb_int32(p, p_end, tag_index);
+                                LOG_REE("In %s, found handler clause %d, tag_index %d\n",
                                     __FUNCTION__,
                                     handler_clause,
-                                    handler_tagindex,
-                                    handler_targetlabel);
+                                    tag_index);
+                                /* check tag index is within the tag index space */
+                                if (tag_index >= module->import_tag_count + module->tag_count) {
+                                    snprintf(error_buf, error_buf_size, "unknown tag %d",
+                                            tag_index);
+                                    goto fail;
+                                }                                
+                                read_leb_int32(p, p_end, depth);
+                                bh_assert(loader_ctx->csp_num > 0);
+                                /* check that are enough labels on the stack for depth*/
+                                if (loader_ctx->csp_num - 1 < depth) {
+                                    set_error_buf(error_buf, error_buf_size,
+                                                "unknown label, "
+                                                "unexpected end of section or function");
+                                    goto fail;
+                                }
+
+                                /* the type of the tag to be catched */
+                                WASMFuncType *tag_type = NULL;
+                                if (tag_index < module->import_tag_count) {
+                                    tag_type = module->import_tags[tag_index].u.tag.tag_type;
+                                }
+                                else {
+                                    tag_type =
+                                        module->tags[tag_index - module->import_tag_count]
+                                            ->tag_type;
+                                }
+
+                                /* the block targeted */
+                                BranchBlock * target_block = loader_ctx->frame_csp - (depth + 1);
+                                BranchBlock * cur_block = loader_ctx->frame_csp - 1;
+                                BlockType * target_block_type = &target_block->block_type;
+                                uint32 tagparams = tag_type->param_count;
+                                uint32 blockresults = block_type_get_arity(target_block_type, target_block->label_type);
+                                LOG_REE("In %s, handler %d, tagindex %d has %d params, depth id %d, targetblock of type %d has %d results\n",
+                                    __FUNCTION__,
+                                    i,
+                                    tag_index,
+                                    tagparams,
+                                    depth,
+                                    target_block->label_type,                         
+                                    blockresults);
+                                
+                                /* check that are enough labels on the stack for depth*/
+                                if (tagparams != blockresults) {
+                                    set_error_buf(error_buf, error_buf_size,
+                                        "tag params do not match target block results");
+                                    goto fail;
+                                }
                                 break;
-                            case EXCN_HANDLER_CLAUSE_CATCH_ALL: // catch_all
-                            case EXCN_HANDLER_CLAUSE_CATCH_ALL_REF: // catch_all_ref
-                                read_leb_int32(p, p_end, handler_targetlabel);
-                                LOG_VERBOSE("In %s, found handler clause %d targetlabel %d\n",
+                            case EXCN_HANDLER_CLAUSE_CATCH_ALL:
+                            case EXCN_HANDLER_CLAUSE_CATCH_ALL_REF:
+                                
+                                read_leb_int32(p, p_end, depth);
+                                bh_assert(loader_ctx->csp_num > 0);
+                                if (loader_ctx->csp_num - 1 < depth) {
+                                    set_error_buf(error_buf, error_buf_size,
+                                                "unknown label, "
+                                                "unexpected end of section or function");
+                                    goto fail;
+                                }
+
+                                /* check, that the params of the tag are 
+                                * of the same type as result of the block
+                                * catchall has zero params?
+                                * catchallref has only  excnref?
+                                */
+                                /* TBD: maybe, extend check_branch_block to do it */
+
+
+                                LOG_REE("In %s, found handler clause %d targetlabel %d\n",
                                     __FUNCTION__,
                                     handler_clause,
-                                    handler_targetlabel);
+                                    depth);
                                 break;
                             default:
                                 set_error_buf(error_buf, error_buf_size,
@@ -11275,8 +11336,7 @@ re_scan:
 #endif
                     }
                 }
-                PUSH_CSP(LABEL_TYPE_BLOCK + (opcode - WASM_OP_BLOCK),
-                         block_type, p);
+                PUSH_CSP(label_type, block_type, p);
 
                 /* Pass parameters to block */
                 if (BLOCK_HAS_PARAM(block_type)) {
@@ -11568,7 +11628,7 @@ re_scan:
                 /* check validity of tag_index against module->tag_count */
                 /* check tag index is within the tag index space */
                 if (tag_index >= module->import_tag_count + module->tag_count) {
-                    LOG_VERBOSE("In %s, unknown tag at WASM_OP_CATCH\n",
+                    LOG_REE("In %s, unknown tag at WASM_OP_CATCH\n",
                                 __FUNCTION__);
                     set_error_buf(error_buf, error_buf_size, "unknown tag");
                     goto fail;
