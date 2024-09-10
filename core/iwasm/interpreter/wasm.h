@@ -5,6 +5,10 @@
 
 #ifndef _WASM_H_
 #define _WASM_H_
+/* ReE TODO Remove */
+#define WASM_ENABLE_EXCE_HANDLING 1
+#define LOG_REE LOG_VERBOSE
+/* /ReE TODO Remove */
 
 #include "bh_platform.h"
 #include "bh_hashmap.h"
