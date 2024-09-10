@@ -2032,6 +2032,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                 param_cell_num = 0;
                 cell_num = wasm_value_type_cell_num(value_type);
 
+                /* first: read the handler data from instruction stream */
                 uint32 handler_count;
                 uint32 handler_clause;
                 uint32 handler_tagindex;
@@ -2067,8 +2068,16 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                         }
                 }
 
-                /* to be improved: end_addr*/
-                PUSH_CSP(LABEL_TYPE_TRY_TABLE, param_cell_num, cell_num, NULL /* end_addr */);
+                /* second: install exception handler */
+
+                /* third: find block-end */
+                wasm_loader_find_block_addr(
+                    exec_env, (BlockAddr *)exec_env->block_addr_cache,
+                    frame_ip, (uint8 *)-1, LABEL_TYPE_TRY_TABLE,
+                    &else_addr, &end_addr);
+
+                /* fourth: push control block */
+                PUSH_CSP(LABEL_TYPE_TRY_TABLE, param_cell_num, cell_num, end_addr);
 
                 HANDLE_OP_END();
             }
@@ -6463,7 +6472,8 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 #endif
         HANDLE_OP(WASM_OP_UNUSED_0x16)
         HANDLE_OP(WASM_OP_UNUSED_0x17)
-        HANDLE_OP(WASM_OP_UNUSED_0x27)
+        /* WASM_OP_UNUSED_0x27 is now used for WASM_OP_SET_GLOBAL_AUX_STACK */
+        /* HANDLE_OP(WASM_OP_UNUSED_0x27) */
         /* Used by fast interpreter */
         HANDLE_OP(EXT_OP_SET_LOCAL_FAST_I64)
         HANDLE_OP(EXT_OP_TEE_LOCAL_FAST_I64)
