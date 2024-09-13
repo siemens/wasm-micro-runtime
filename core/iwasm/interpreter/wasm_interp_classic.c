@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
+#include "wasm.h"
 #include "wasm_interp.h"
 #include "bh_log.h"
 #include "wasm_runtime.h"
@@ -1685,14 +1686,83 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                 frame_sp += cell_num_to_copy;
                 goto find_a_catch_handler;
             }
+            HANDLE_OP(WASM_OP_THROW_REF)
+            {
+unwind_and_find_exception_handler:
+                {
+                    frame_sp -= 2;
+                    void * exnref = (void*) GET_REF_FROM_ADDR(frame_sp);
 
+                    LOG_REE("THROW_REF is lookung for try-table frame and catch clauses for exnref %p", exnref);
+
+                    do {
+                        LOG_REE("frame_csp is a label of type %d", (frame_csp-1)->label_type);
+                        switch ((frame_csp-1)->label_type) {
+                            case LABEL_TYPE_IF:
+                            case LABEL_TYPE_BLOCK:
+                            case LABEL_TYPE_LOOP:
+                                /* that frame type have no excn handlers */
+                                break;
+                            case LABEL_TYPE_TRY_TABLE:
+                                /* look for clauses */
+
+                                /* to be implemented */
+
+                                break;
+                            case LABEL_TYPE_FUNCTION:
+                                /* return exnref to caller */
+                                LOG_REE("THROW_REF is returning the exnref to the caller");
+
+                                /* push excnref to _caller_ stack */
+                                PUT_REF_TO_ADDR(prev_frame->sp, exnref);
+                                prev_frame->sp += 2;            
+#if WASM_ENABLE_RETVALTYPE == 1            
+                                wasm_set_exnref(module, (void*)0x0815);
+                                goto return_func;
+#endif
+                                break;
+
+                            default: 
+                                wasm_set_exception(
+                                    module, "label type cannot handled by THROW_REF");
+                                goto got_exception;
+
+                        }
+                        POP_CSP();
+                    } while (frame_csp > frame->csp_bottom);
+                    /* ... */
+                    wasm_set_exception(
+                        module, "no frames left in THROW_REF");
+                    goto got_exception;
+
+
+                }
+            }
             HANDLE_OP(WASM_OP_THROW)
             {
                 read_leb_int32(frame_ip, frame_ip_end, exception_tag_index);
 
+                /* create exception instance */
+
+                /* create exception ref */
+                void * exnref = (void*) 0xdeadbeef;
+
+                /* push excnref to stack */
+                PUT_REF_TO_ADDR(frame_sp, exnref);
+                frame_sp += 2;            
+
+                /* find a try_table and lookup catch clauses */
+                goto unwind_and_find_exception_handler;
             /* landing pad for the rethrow ? */
             find_a_catch_handler:
             {
+                /* not yet imeplemented THROW: uncaught exception */
+
+                wasm_set_exception(
+                    module, "WASM_OP_THROW hit the bottom of the frame stack");
+                goto got_exception;
+
+#if 0 /* deprecated */                
                 WASMFuncType *tag_type = NULL;
                 uint32 cell_num_to_copy = 0;
                 if (IS_INVALID_TAGINDEX(exception_tag_index)) {
@@ -1908,8 +1978,8 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                     relative_depth++;
 
                 } while (1);
+#endif
             }
-
                 /* something went wrong. normally, we should always find the
                  * func label. if not, stop the interpreter */
                 wasm_set_exception(
@@ -6458,6 +6528,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 #if WASM_ENABLE_EXCE_HANDLING == 0
         HANDLE_OP(WASM_OP_TRY)
         HANDLE_OP(WASM_OP_CATCH)
+        HANDLE_OP(WASM_OP_THROW_REF)
         HANDLE_OP(WASM_OP_THROW)
         HANDLE_OP(WASM_OP_RETHROW)
         HANDLE_OP(WASM_OP_DELEGATE)
@@ -6522,7 +6593,10 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 
     call_func_from_entry:
     {
+        LOG_REE("calling function from entry cur_func");
         if (cur_func->is_import_func) {
+            LOG_REE("imported function call");
+
 #if WASM_ENABLE_MULTI_MODULE != 0
             if (cur_func->import_func_inst) {
                 wasm_interp_call_func_import(module, exec_env, cur_func,
@@ -6542,7 +6616,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                     UPDATE_ALL_FROM_FRAME();
                 }
 
-#if WASM_ENABLE_EXCE_HANDLING != 0
+#if 0 // deprecated  WASM_ENABLE_EXCE_HANDLING != 0
                 char uncaught_exception[128] = { 0 };
                 bool has_exception =
                     wasm_copy_exception(module, uncaught_exception);
@@ -6615,7 +6689,17 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 #endif
             if (wasm_copy_exception(module, NULL)) {
 #if WASM_ENABLE_EXCE_HANDLING != 0
-                /* the caller raised an exception */
+                /* the called function raised an exception */
+#if WASM_ENABLE_RETVALTYPE == 1
+                if (module->returned_value_type == RETVALTYPE_EXNREF) {
+                    LOG_REE("the imported called module returned an exnref");    
+                    /* rethrow in caller */
+                    /* goto handle_throw_ref:*/
+
+                    /* TODO: do not return to embedder */
+                    return;                
+                }
+#endif
                 char uncaught_exception[128] = { 0 };
                 bool has_exception =
                     wasm_copy_exception(module, uncaught_exception);
@@ -6646,6 +6730,8 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
             }
         }
         else {
+            LOG_REE("interpreter function call");
+
             WASMFunction *cur_wasm_func = cur_func->u.func;
             WASMFuncType *func_type = cur_wasm_func->func_type;
             uint32 max_stack_cell_num = cur_wasm_func->max_stack_cell_num;
@@ -6742,13 +6828,28 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
         FREE_FRAME(exec_env, frame);
         wasm_exec_env_set_cur_frame(exec_env, prev_frame);
 
+        LOG_REE("returned from a function call");
+
         if (!prev_frame->ip) {
+            LOG_REE("called from native");
             /* Called from native. */
             return;
         }
 
+        LOG_REE("called from interpreter");
+
+
         RECOVER_CONTEXT(prev_frame);
 #if WASM_ENABLE_EXCE_HANDLING != 0
+#if WASM_ENABLE_RETVALTYPE == 1
+                if (module->returned_value_type == RETVALTYPE_EXNREF) {
+                    LOG_REE("the interpreter called module returned an exnref");    
+                    /* rethrow exn reference in the caller frame */
+                    /* assumption: exnref is on top of stack */
+                    goto unwind_and_find_exception_handler;                
+                }
+#endif
+
         if (wasm_get_exception(module)) {
             wasm_set_exception(module, NULL);
             exception_tag_index = POP_I32();
