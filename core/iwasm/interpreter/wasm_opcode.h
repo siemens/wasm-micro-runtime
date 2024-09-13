@@ -24,7 +24,7 @@ typedef enum WASMOpcode {
     WASM_OP_CATCH = 0x07,       /* deprecated: catch */
     WASM_OP_THROW = 0x08,       /* throw of a try catch */
     WASM_OP_RETHROW = 0x09,     /* rethrow of a try catch */
-    WASM_OP_UNUSED_0x0a = 0x0a,
+    WASM_OP_THROW_REF = 0x0a,   /* throwing an exn reference */
 
     WASM_OP_END = 0x0b,                  /* end */
     WASM_OP_BR = 0x0c,                   /* br */
