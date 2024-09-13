@@ -6,8 +6,19 @@
 #ifndef _WASM_H_
 #define _WASM_H_
 /* ReE TODO Remove */
-#define WASM_ENABLE_EXCE_HANDLING 1
+#ifndef WASM_ENABLE_TAGS
+#define WASM_ENABLE_TAGS (1)
+#endif
+#ifndef WASM_ENABLE_EXCE_HANDLING
+#define WASM_ENABLE_EXCE_HANDLING (1)
+#endif
+#ifndef WASM_ENABLE_RETVALTYPE
+#define WASM_ENABLE_RETVALTYPE (1) 
+#endif
+#ifndef LOG_REE
+// #define LOG_REE printf 
 #define LOG_REE LOG_VERBOSE
+#endif
 /* /ReE TODO Remove */
 
 #include "bh_platform.h"
@@ -98,6 +109,13 @@ extern "C" {
 #define SHARED_MEMORY_FLAG 0x02
 #define MEMORY64_FLAG 0x04
 
+
+#if WASM_ENABLE_RETVALTYPE == 1
+#define RETVALTYPE_VALUE 0
+#define RETVALTYPE_TRAP 1
+#define RETVALTYPE_EXNREF 2
+#define RETVALTYPE_EXTERNREF 3 /* ??? */
+#endif
 /**
  * In the multi-memory proposal, the memarg in loads and stores are
  * reinterpreted as a bitfield, bit 6 serves as a flag indicating the presence
