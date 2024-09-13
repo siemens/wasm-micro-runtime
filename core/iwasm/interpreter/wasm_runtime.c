@@ -2362,6 +2362,22 @@ wasm_instantiate(WASMModule *module, WASMModuleInstance *parent,
     }
 #endif
 
+#if WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
+    /* allocate exnrefs */
+    if (!(module_inst->frames = runtime_malloc((uint64)sizeof(Vector),
+                                               error_buf, error_buf_size))) {
+        goto fail;
+    }
+    /* allocate exception instances */
+    module_inst->e->exns_count=16;
+    if (!(module_inst->e->exns = (WASMExceptionInstance**) 
+            runtime_malloc(sizeof(WASMExceptionInstance*)*module_inst->e->exns_count,
+            error_buf, error_buf_size))) {
+                LOG_REE("runtime_malloc for exception instances failed");
+                goto fail;
+    }
+    LOG_REE("runtime_malloc for %d exception instances success", module_inst->e->exns_count);        
+#endif
     /* Instantiate global firstly to get the mutable data size */
     global_count = module->import_global_count + module->global_count;
     if (global_count

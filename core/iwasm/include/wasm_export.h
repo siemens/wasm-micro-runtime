@@ -1078,6 +1078,29 @@ wasm_application_execute_func(wasm_module_inst_t module_inst, const char *name,
 WASM_RUNTIME_API_EXTERN const char *
 wasm_runtime_get_exception(wasm_module_inst_t module_inst);
 
+#if WASM_ENABLE_RETVALTYPE == 1            
+ /**
+ * Get exception info of the WASM module instance.
+ *
+ * @param module_inst the WASM module instance
+ *
+ * @return the exception string
+ */
+WASM_RUNTIME_API_EXTERN uint32
+wasm_runtime_exception_getretvaltype(wasm_module_inst_t module_inst);
+WASM_RUNTIME_API_EXTERN bool 
+wasm_runtime_exception_is_value(wasm_module_inst_t module_inst_comm); 
+
+WASM_RUNTIME_API_EXTERN bool 
+wasm_runtime_exception_is_trap(wasm_module_inst_t module_inst_comm);
+
+WASM_RUNTIME_API_EXTERN bool 
+wasm_runtime_exception_is_exnref(wasm_module_inst_t module_inst_comm);
+
+WASM_RUNTIME_API_EXTERN bool 
+wasm_runtime_exception_is_externref(wasm_module_inst_t module_inst_comm);
+
+#endif
 /**
  * Set exception info of the WASM module instance.
  *

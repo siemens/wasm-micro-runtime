@@ -251,6 +251,16 @@ struct WASMTagInstance {
 };
 #endif
 
+
+#if WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
+typedef struct WASMExceptionInstance {
+    void * tagaddress;
+    uint32 cells;
+    uint32 * vals;
+} WASMExceptionInstance;
+#endif
+
+
 #if WASM_ENABLE_EXCE_HANDLING != 0
 #define INVALID_TAGINDEX ((uint32)0xFFFFFFFF)
 #define SET_INVALID_TAGINDEX(tag) (tag = INVALID_TAGINDEX)
@@ -358,6 +368,12 @@ typedef struct WASMModuleInstanceExtra {
         && WASM_ENABLE_LAZY_JIT != 0)
     WASMModuleInstance *next;
 #endif
+
+#if WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
+    uint32 exns_count;
+    WASMExceptionInstance ** exns;
+#endif
+
 } WASMModuleInstanceExtra;
 
 struct AOTFuncPerfProfInfo;
@@ -430,8 +446,19 @@ struct WASMModuleInstance {
 
     /* Default WASM operand stack size */
     uint32 default_wasm_stack_size;
+#if WASM_ENABLE_RETVALTYPE == 1
+    /* accoring to the spec, a returned value type can be */
+    /* either a value (i??,f??,v128) or trap, refs or exception */ 
+    /* this workaround proposal allows the caller or embedder to */
+    /* distinguish the result and decide, if it is a "non-value" */
+    /* to not break the API, traps, exceptions and refs are all treated */
+    /* as "trap" with an string in the module_inst->cur_exception */
+    /* (see wasm_set_exception and wasm_get_exception) in wasm_runtime_common */
+    uint32 returned_value_type;
+    uint32 reserved[6];
+#else
     uint32 reserved[7];
-
+#endif
     /*
      * +------------------------------+ <-- memories
      * | WASMMemoryInstance[mem_count], mem_count is always 1 for LLVM JIT/AOT
@@ -578,6 +605,29 @@ wasm_get_exception(WASMModuleInstance *module);
  */
 bool
 wasm_copy_exception(WASMModuleInstance *module_inst, char *exception_buf);
+
+#if WASM_ENABLE_RETVALTYPE == 1
+
+/* similar to wasm_set_exception, wasm_set_exnref is meant to create an
+ * trap "uncaught exception" but marks the traps returnvalue to be of type
+ * EXNREF. the caller can find out about the situation by calling the
+ * function "wasm_get_retvaltype()" or the various 
+ */
+void
+wasm_set_exnref(WASMModuleInstance *module_inst, void * exnref);
+
+/* get detailed info about the returned wamr-exception 
+ * distict, if an exception is 
+ * - a value, caller stack contains the result
+ * - a trap, wasm_copy_exception() to get the exeption string
+ * - a exnref, caller stack contains an exception reference
+ * - a externref, (not implemented)
+ * ... might be extended
+ */
+uint32
+wasm_exception_getretvaltype(WASMModuleInstanceCommon *module_inst_comm);
+
+#endif
 
 uint64
 wasm_module_malloc_internal(WASMModuleInstance *module_inst,

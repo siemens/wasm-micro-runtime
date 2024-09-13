@@ -2929,9 +2929,15 @@ wasm_set_exception_local(WASMModuleInstance *module_inst, const char *exception)
     if (exception) {
         snprintf(module_inst->cur_exception, sizeof(module_inst->cur_exception),
                  "Exception: %s", exception);
+#if WASM_ENABLE_RETVALTYPE == 1
+        module_inst->returned_value_type = RETVALTYPE_TRAP;
+#endif
     }
     else {
         module_inst->cur_exception[0] = '\0';
+#if WASM_ENABLE_RETVALTYPE == 1
+        module_inst->returned_value_type = RETVALTYPE_VALUE;
+#endif
     }
     exception_unlock(module_inst);
 }
@@ -2952,6 +2958,18 @@ wasm_set_exception(WASMModuleInstance *module_inst, const char *exception)
     wasm_set_exception_local(module_inst, exception);
 #endif
 }
+#if WASM_ENABLE_RETVALTYPE == 1
+/* mark the returnvalue to be an excnref */
+void
+wasm_set_exnref(WASMModuleInstance *module_inst, void * unused)
+{
+    /* to be alinged with the API, wasm_copy_exception threats it a trap */
+    wasm_set_exception_local(module_inst, "uncaught exception reference");
+    /* annotate in wasm_module, that there is an exnref on the stack */
+    module_inst->returned_value_type = RETVALTYPE_EXNREF;
+    (void) unused;
+}
+#endif
 
 /* clang-format off */
 static const char *exception_msgs[] = {
@@ -3073,6 +3091,37 @@ wasm_runtime_clear_exception(WASMModuleInstanceCommon *module_inst_comm)
               || module_inst_comm->module_type == Wasm_Module_AoT);
     wasm_runtime_set_exception(module_inst_comm, NULL);
 }
+
+#if WASM_ENABLE_RETVALTYPE == 1
+/* #define RETVALTYPE_VALUE 0 */
+/* #define RETVALTYPE_TRAP 1 */
+/* #define RETVALTYPE_EXNREF 2 */
+uint32
+wasm_runtime_exception_getretvaltype(WASMModuleInstanceCommon *module_inst_comm)
+{
+    WASMModuleInstance *module_inst = (WASMModuleInstance *)module_inst_comm;
+    LOG_REE("module_inst->returned_value_type=%d", module_inst->returned_value_type);
+    return module_inst->returned_value_type;
+}
+/* conveniece functions */
+bool wasm_runtime_exception_is_value(WASMModuleInstanceCommon *module_inst_comm) 
+{
+    return wasm_runtime_exception_getretvaltype(module_inst_comm) == RETVALTYPE_VALUE;
+}
+bool wasm_runtime_exception_is_trap(WASMModuleInstanceCommon *module_inst_comm)
+{
+    return wasm_runtime_exception_getretvaltype(module_inst_comm) == RETVALTYPE_TRAP;
+}
+bool wasm_runtime_exception_is_exnref(WASMModuleInstanceCommon *module_inst_comm)
+{
+    return wasm_runtime_exception_getretvaltype(module_inst_comm) == RETVALTYPE_EXNREF;
+}
+bool wasm_runtime_exception_is_externref(WASMModuleInstanceCommon *module_inst_comm)
+{
+    return wasm_runtime_exception_getretvaltype(module_inst_comm) == RETVALTYPE_EXTERNREF;
+}
+
+#endif
 
 void
 wasm_runtime_terminate(WASMModuleInstanceCommon *module_inst_comm)
