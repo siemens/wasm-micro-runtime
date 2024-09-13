@@ -204,8 +204,14 @@ app_instance_repl(wasm_module_inst_t module_inst)
             const char *exception;
             wasm_application_execute_func(module_inst, app_argv[0],
                                           app_argc - 1, app_argv + 1);
-            if ((exception = wasm_runtime_get_exception(module_inst)))
+            if ((exception = wasm_runtime_get_exception(module_inst))) {
                 printf("%s\n", exception);
+#if WASM_ENABLE_RETVALTYPE == 1            
+                if (wasm_runtime_exception_is_exnref(module_inst)) {
+                    printf("the module returned an exception reference\n");            
+                }
+#endif                
+            }
         }
         free(app_argv);
     }
