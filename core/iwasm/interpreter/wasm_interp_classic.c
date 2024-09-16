@@ -1691,9 +1691,9 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 unwind_and_find_exception_handler:
                 {
                     frame_sp -= 2;
-                    void * exnref = (void*) GET_REF_FROM_ADDR(frame_sp);
+                    WASMExceptionReference exnref = (void*) GET_REF_FROM_ADDR(frame_sp);
 
-                    LOG_REE("THROW_REF is lookung for try-table frame and catch clauses for exnref %p", exnref);
+                    LOG_REE("THROW_REF is looking for try-table frame and catch clauses for exnref %p", exnref);
 
                     do {
                         LOG_REE("frame_csp is a label of type %d", (frame_csp-1)->label_type);
@@ -1701,12 +1701,41 @@ unwind_and_find_exception_handler:
                             case LABEL_TYPE_IF:
                             case LABEL_TYPE_BLOCK:
                             case LABEL_TYPE_LOOP:
-                                /* that frame type have no excn handlers */
+                                /* that frame types do not have excn handlers */
                                 break;
                             case LABEL_TYPE_TRY_TABLE:
                                 /* look for clauses */
+                                {
+                                    uint32 num_clauses = *(int32 *)((frame_csp-1)->frame_sp);
+                                    LOG_REE("there are %d clauses in the frame", num_clauses);
+
+                                }
 
                                 /* to be implemented */
+
+                                uint32 handler_clause = 0;
+                                uint32 handler_depth = 0;
+                                switch (handler_clause) {
+                                    case EXCN_HANDLER_CLAUSE_CATCH:
+                                    /* put values */                                
+                                    /* release excn instance */
+                                    free_exnref(module, exnref);
+                                    break;
+
+                                    case EXCN_HANDLER_CLAUSE_CATCH_REF:
+                                    /* put values and ref */                                    
+                                    break;
+
+                                    case EXCN_HANDLER_CLAUSE_CATCH_ALL:
+                                    /* put nothing */
+                                    /* release excn instance */
+                                    free_exnref(module, exnref);
+                                    break;
+
+                                    case EXCN_HANDLER_CLAUSE_CATCH_ALL_REF:
+                                    /* put ref */
+                                    break;
+                                }
 
                                 break;
                             case LABEL_TYPE_FUNCTION:
@@ -1728,6 +1757,7 @@ unwind_and_find_exception_handler:
                                 goto got_exception;
 
                         }
+                        /* unwind */
                         POP_CSP();
                     } while (frame_csp > frame->csp_bottom);
                     /* ... */
@@ -1742,10 +1772,28 @@ unwind_and_find_exception_handler:
             {
                 read_leb_int32(frame_ip, frame_ip_end, exception_tag_index);
 
+                /* get tag address */
+                WASMTagInstance * ti = & module->e->tags[exception_tag_index];
+                WASMFuncType * tag_type = ti->is_import_tag ?
+                    ti->u.tag_import->tag_type :
+                    ti->u.tag->tag_type;
+                
                 /* create exception instance */
+                LOG_REE("throw tag index %d, ref %p", exception_tag_index, ti);
+                WASMExceptionReference exnref = allocate_exnref(module, ti);
+                if (!exnref) {
+                    wasm_set_exception(
+                        module, "WASM_OP_THROW allocating an exception instance failed.");
+                    goto got_exception;
+                }
 
-                /* create exception ref */
-                void * exnref = (void*) 0xdeadbeef;
+                /* collect tag values */
+                LOG_REE("tag has %d cells, exn has %d cells allocated",
+                    tag_type->param_cell_num,
+                    exnref->cells);
+
+                frame_sp-=tag_type->param_cell_num;
+                word_copy(exnref->vals, frame_sp, tag_type->param_cell_num);
 
                 /* push excnref to stack */
                 PUT_REF_TO_ADDR(frame_sp, exnref);
@@ -2108,13 +2156,14 @@ unwind_and_find_exception_handler:
                 uint32 handler_tagindex;
                 uint32 handler_targetlabel;
                 read_leb_int32(frame_ip, frame_ip_end, handler_count);
+
                 for (i=0; i<handler_count; i++) {
                     read_leb_int32(frame_ip, frame_ip_end, handler_clause);
                     switch (handler_clause) {
                         case EXCN_HANDLER_CLAUSE_CATCH: // catch
                         case EXCN_HANDLER_CLAUSE_CATCH_REF: // catch_ref
                             read_leb_int32(frame_ip, frame_ip_end, handler_tagindex);
-                            read_leb_int32(frame_ip, frame_ip_end, handler_targetlabel);
+                        read_leb_int32(frame_ip, frame_ip_end, handler_targetlabel);
                             LOG_VERBOSE("In %s, found handler clause %d for tagindex %d targetlabel %d\n",
                                 __FUNCTION__,
                                 handler_clause,
@@ -2148,6 +2197,7 @@ unwind_and_find_exception_handler:
 
                 /* fourth: push control block */
                 PUSH_CSP(LABEL_TYPE_TRY_TABLE, param_cell_num, cell_num, end_addr);
+                PUSH_I32(handler_count);
 
                 HANDLE_OP_END();
             }
