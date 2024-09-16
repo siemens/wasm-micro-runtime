@@ -27,6 +27,11 @@ typedef struct WASMGlobalInstance WASMGlobalInstance;
 #if WASM_ENABLE_TAGS != 0
 typedef struct WASMTagInstance WASMTagInstance;
 #endif
+#if WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
+typedef struct WASMExceptionInstance WASMExceptionInstance;
+typedef WASMExceptionInstance * WASMExceptionReference;
+#endif
+
 
 /**
  * When LLVM JIT, WAMR compiler or AOT is enabled, we should ensure that
@@ -253,11 +258,12 @@ struct WASMTagInstance {
 
 
 #if WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
-typedef struct WASMExceptionInstance {
-    void * tagaddress;
+struct WASMExceptionInstance {
+    uint32 refcount;
+    WASMTagInstance * tagaddress;
     uint32 cells;
     uint32 * vals;
-} WASMExceptionInstance;
+};
 #endif
 
 
@@ -581,7 +587,13 @@ WASMTagInstance *
 wasm_lookup_tag(const WASMModuleInstance *module_inst, const char *name,
                 const char *signature);
 #endif
+#endif
+#if WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
+void
+free_exnref(WASMModuleInstance *module_inst, const WASMExceptionReference exn);
 
+WASMExceptionReference
+allocate_exnref(WASMModuleInstance *module_inst, WASMTagInstance * ti);
 #endif
 
 bool
