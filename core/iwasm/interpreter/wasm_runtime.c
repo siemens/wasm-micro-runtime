@@ -837,6 +837,121 @@ fail:
 }
 #endif /* end of WASM_ENABLE_TAGS != 0 */
 
+#if WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
+/**
+ * Destroy exception instances.
+ */
+static void
+exns_deinstantiate(WASMExceptionInstance *tags)
+{
+/* TBD */
+}
+
+/**
+ * Instantiate exception instances in a module.
+ */
+static WASMExceptionInstance **
+exns_instantiate(const WASMModule *module, WASMModuleInstance *module_inst,
+                 char *error_buf, uint32 error_buf_size)
+{
+    int exns_count = module_inst->e->exns_count;
+    WASMExceptionInstance ** exns_ref;
+    WASMExceptionInstance * exns;
+
+    /* allocate references */
+    /* allocate a number of exception references  */
+    exns_ref = runtime_malloc(sizeof(WASMExceptionInstance*)*exns_count, error_buf, error_buf_size);
+
+    if (!exns_ref) {
+        LOG_REE("runtime_malloc for exception references failed");
+        return NULL;
+    }
+
+    /* allocate a number of exception instances  */
+    exns = runtime_malloc(sizeof(WASMExceptionInstance)*exns_count, error_buf, error_buf_size);
+   
+    if (!exns) {
+        LOG_REE("runtime_malloc for exception instances failed");
+        wasm_runtime_free(exns_ref);
+        return NULL;
+    }
+
+    /* initialize the instances, set references */
+    for (int i = 0; i < exns_count; i++, exns++) {
+        exns_ref[i] = exns;
+        exns->refcount = 0;
+        exns->cells = 0;
+        exns->vals = NULL;
+        exns->tagaddress = NULL;
+        LOG_REE("exns_ref[%d]=%p", i, exns_ref[i]);
+    }
+
+    //module_inst->e->exns = exns;
+    LOG_REE("runtime_malloc for %d exception instances success, exns_ref=%p", exns_count, exns_ref);
+
+    return exns_ref;
+}
+
+void free_exnref(WASMModuleInstance *module_inst, const WASMExceptionReference exn) {
+    exn->refcount = 0;
+    (void) module_inst;
+}
+
+WASMExceptionReference allocate_exnref(WASMModuleInstance *module_inst, WASMTagInstance * ti) {
+    LOG_REE("find unused exception instance, module_inst->e->exns=%p", module_inst->e->exns);
+
+    int exns_count = module_inst->e->exns_count;
+    WASMExceptionInstance ** exns_ref = module_inst->e->exns;
+    WASMExceptionReference exn = NULL;
+
+    for (int i = 0; i < exns_count; i++) {
+        LOG_REE("exns_ref[%d]=%p", i, exns_ref[i]);
+        if (exns_ref[i]->refcount == 0) {
+    
+            /* unused ref found */
+            exn = exns_ref[i];
+            LOG_REE("exeption instance %d, ref %p is unused", i, exn);
+            break;
+        }
+    }
+
+    if (!exn) {
+        LOG_REE("no exeption refs left");
+        return NULL;
+    }
+
+    WASMFuncType *tag_type = ti->is_import_tag ?
+        ti->u.tag_import->tag_type :
+        ti->u.tag->tag_type;
+    
+    if (exn->cells < tag_type->param_cell_num) {
+        /* vals is unallocated or too small */
+        if (exn->vals) {
+            /* free, if allocated buffer was too small */
+            wasm_runtime_free(exn->vals);
+            exn->vals = NULL;
+            exn->cells = 0;
+        }
+        /* allocate number of cells as tag specifies */
+        uint32 to_alloc = sizeof(uint32) * tag_type->param_cell_num;
+        exn->vals = runtime_malloc(to_alloc, NULL, 0);
+        if (!exn->vals) {
+            LOG_REE("cannot allocate vals");
+            return NULL;
+        }
+        exn->cells = tag_type->param_cell_num;
+    }
+
+    LOG_REE("tagadress %p, tagtype %p, cellnum %d", ti, tag_type, tag_type->param_cell_num);
+
+    exn->refcount++;
+    exn->tagaddress = ti;
+
+    LOG_REE("returning exeption ref %p", exn);
+    return exn;
+}
+#endif
+
 /**
  * Destroy global instances.
  */
@@ -2362,22 +2477,6 @@ wasm_instantiate(WASMModule *module, WASMModuleInstance *parent,
     }
 #endif
 
-#if WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
-    /* allocate exnrefs */
-    if (!(module_inst->frames = runtime_malloc((uint64)sizeof(Vector),
-                                               error_buf, error_buf_size))) {
-        goto fail;
-    }
-    /* allocate exception instances */
-    module_inst->e->exns_count=16;
-    if (!(module_inst->e->exns = (WASMExceptionInstance**) 
-            runtime_malloc(sizeof(WASMExceptionInstance*)*module_inst->e->exns_count,
-            error_buf, error_buf_size))) {
-                LOG_REE("runtime_malloc for exception instances failed");
-                goto fail;
-    }
-    LOG_REE("runtime_malloc for %d exception instances success", module_inst->e->exns_count);        
-#endif
     /* Instantiate global firstly to get the mutable data size */
     global_count = module->import_global_count + module->global_count;
     if (global_count
@@ -2401,7 +2500,9 @@ wasm_instantiate(WASMModule *module, WASMModuleInstance *parent,
 #if WASM_ENABLE_TAGS != 0
     module_inst->e->tag_count = module->import_tag_count + module->tag_count;
 #endif
-
+#if WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
+    module_inst->e->exns_count = 4; /* fixed for the moment */
+#endif
     /* export */
     module_inst->export_func_count = get_export_count(module, EXPORT_KIND_FUNC);
 #if WASM_ENABLE_MULTI_MODULE != 0
@@ -2441,6 +2542,11 @@ wasm_instantiate(WASMModule *module, WASMModuleInstance *parent,
             && !(module_inst->e->export_tags = export_tags_instantiate(
                      module, module_inst, module_inst->e->export_tag_count,
                      error_buf, error_buf_size)))
+#endif
+#if WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
+        || (module_inst->e->exns_count > 0
+            && !(module_inst->e->exns = exns_instantiate(
+                     module, module_inst, error_buf, error_buf_size)))
 #endif
 #if WASM_ENABLE_MULTI_MODULE != 0
         || (module_inst->export_global_count > 0
