@@ -259,9 +259,17 @@ struct WASMTagInstance {
 
 #if WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
 struct WASMExceptionInstance {
+    /* reference counter, for internal use */
     uint32 refcount;
+    /* address of the thrown tag */
     WASMTagInstance * tagaddress;
-    uint32 cells;
+    /* cells allocated in vals, for internal use */
+    uint32 cell_alloc;
+    /* cells actually pushed to the vals array 
+     * should be eiter zero or equal to tagaddress->type->param_cells_used 
+     */
+    uint32 cell_num;
+    /* stores actual values of the exception (tag params) */
     uint32 * vals;
 };
 #endif

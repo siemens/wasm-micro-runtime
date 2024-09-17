@@ -880,7 +880,8 @@ exns_instantiate(const WASMModule *module, WASMModuleInstance *module_inst,
     for (int i = 0; i < exns_count; i++, exns++) {
         exns_ref[i] = exns;
         exns->refcount = 0;
-        exns->cells = 0;
+        exns->cell_num = 0;
+        exns->cell_alloc = 0;
         exns->vals = NULL;
         exns->tagaddress = NULL;
         LOG_REE("exns_ref[%d]=%p", i, exns_ref[i]);
@@ -894,6 +895,8 @@ exns_instantiate(const WASMModule *module, WASMModuleInstance *module_inst,
 
 void free_exnref(WASMModuleInstance *module_inst, const WASMExceptionReference exn) {
     exn->refcount = 0;
+    exn->cell_num = 0;
+    exn->tagaddress = NULL;
     (void) module_inst;
 }
 
@@ -924,13 +927,13 @@ WASMExceptionReference allocate_exnref(WASMModuleInstance *module_inst, WASMTagI
         ti->u.tag_import->tag_type :
         ti->u.tag->tag_type;
     
-    if (exn->cells < tag_type->param_cell_num) {
+    if (exn->cell_alloc < tag_type->param_cell_num) {
         /* vals is unallocated or too small */
         if (exn->vals) {
             /* free, if allocated buffer was too small */
             wasm_runtime_free(exn->vals);
             exn->vals = NULL;
-            exn->cells = 0;
+            exn->cell_alloc = 0;
         }
         /* allocate number of cells as tag specifies */
         uint32 to_alloc = sizeof(uint32) * tag_type->param_cell_num;
@@ -939,13 +942,14 @@ WASMExceptionReference allocate_exnref(WASMModuleInstance *module_inst, WASMTagI
             LOG_REE("cannot allocate vals");
             return NULL;
         }
-        exn->cells = tag_type->param_cell_num;
+        exn->cell_alloc = tag_type->param_cell_num;
     }
 
     LOG_REE("tagadress %p, tagtype %p, cellnum %d", ti, tag_type, tag_type->param_cell_num);
 
     exn->refcount++;
     exn->tagaddress = ti;
+    // exn->cell_num = tag_type->param_cell_num;
 
     LOG_REE("returning exeption ref %p", exn);
     return exn;
