@@ -38,6 +38,8 @@ extern "C" {
 #define VALUE_TYPE_F32 0x7D
 #define VALUE_TYPE_F64 0x7C
 #define VALUE_TYPE_V128 0x7B
+#define VALUE_TYPE_EXNREF 0x69
+#define VALUE_TYPE_TAGREF VALUE_TYPE_EXNREF
 #define VALUE_TYPE_FUNCREF 0x70
 #define VALUE_TYPE_EXTERNREF 0x6F
 #define VALUE_TYPE_VOID 0x40
@@ -51,6 +53,7 @@ extern "C" {
 #define REF_TYPE_NULLEXTERNREF 0x72
 #define REF_TYPE_NULLREF 0x71
 #define REF_TYPE_FUNCREF VALUE_TYPE_FUNCREF     /* 0x70 */
+#define REF_TYPE_EXNREF VALUE_TYPE_EXNREF /* 0x69 */
 #define REF_TYPE_EXTERNREF VALUE_TYPE_EXTERNREF /* 0x6F */
 #define REF_TYPE_ANYREF 0x6E
 #define REF_TYPE_EQREF 0x6D
@@ -1262,6 +1265,12 @@ wasm_value_type_size_internal(uint8 value_type, uint8 pointer_size)
         return sizeof(int8);
     else if (value_type == PACKED_TYPE_I16)
         return sizeof(int16);
+#endif
+#if WASM_ENABLE_EXCE_HANDLING != 0
+    else if (value_type == VALUE_TYPE_EXNREF)
+        return sizeof(void*);
+    else if (value_type == VALUE_TYPE_TAGREF)
+        return sizeof(void*);
 #endif
     else {
         bh_assert(0);
