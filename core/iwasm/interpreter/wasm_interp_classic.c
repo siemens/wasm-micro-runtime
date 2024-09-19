@@ -617,14 +617,21 @@ wasm_interp_get_frame_ref(WASMInterpFrame *frame)
         (frame_csp - 1)->label_type = T ? T : (frame_csp - 1)->label_type; \
     } while (0)
 #endif
-#define UNWIND_CSP(N, E)                                               \
-    do {                                                               \
-        /* unwind from try_table label to catching label */            \
-        /* add 1 to N, as UNWIND_CSP is called in TRY_TABLE frame */   \
-        POP_CSP_CHECK_OVERFLOW(N+1);                                 \
-        frame_csp -= (N+1);                                            \
-        frame_ip = (frame_csp - 1)->target_addr;                       \
-        frame_sp = (frame_csp - 1)->frame_sp;                          \
+#define UNWIND_CSP(N)                                                     \
+    do {                                                                  \
+        /* unwind from try_table label to catching label */               \
+        /* add 1 to N, as UNWIND_CSP is called in TRY_TABLE frame */      \
+        POP_CSP_N(N+1);                                                   \
+        if (!frame_ip) {                                                  \
+            if (!wasm_loader_find_block_addr(                             \
+                    exec_env, (BlockAddr *)exec_env->block_addr_cache,    \
+                    (frame_csp - 1)->begin_addr, (uint8 *)-1,             \
+                    (frame_csp - 1)->label_type, &else_addr, &end_addr)) {\
+                wasm_set_exception(module, "find block address failed");  \
+                goto got_exception;                                       \
+            }                                                             \
+            frame_ip = end_addr;                                          \
+        }                                                                 \
     } while (0)
 #endif
 
@@ -1783,18 +1790,7 @@ unwind_and_find_exception_handler:
 
                                     /* branch to label, like WASM_OP_BR
                                      * add 1 to the depth to pop the TRY_TABLE block too */
-                                    POP_CSP_N(handler_depth+1);
-                                    if (!frame_ip) { /* must be label pushed by WASM_OP_BLOCK */
-                                        if (!wasm_loader_find_block_addr(
-                                                exec_env, (BlockAddr *)exec_env->block_addr_cache,
-                                                (frame_csp - 1)->begin_addr, (uint8 *)-1,
-                                                LABEL_TYPE_BLOCK, &else_addr, &end_addr)) {
-                                            wasm_set_exception(module, "find block address failed");
-                                            goto got_exception;
-                                        }
-                                        frame_ip = end_addr;
-                                    }
-                                    // UNWIND_CSP(handler_depth, exnref);
+                                    UNWIND_CSP(handler_depth);
                                     /* restore destrination sp, lp, ... */
 
                                     /* push values to the new stack */
@@ -6655,7 +6651,6 @@ unwind_and_find_exception_handler:
 #endif
 
 #if WASM_ENABLE_LABELS_AS_VALUES != 0
-        HANDLE_OP(WASM_OP_UNUSED_0x0a)
 #if WASM_ENABLE_TAIL_CALL == 0
         HANDLE_OP(WASM_OP_RETURN_CALL)
         HANDLE_OP(WASM_OP_RETURN_CALL_INDIRECT)
