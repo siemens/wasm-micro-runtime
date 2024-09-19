@@ -77,6 +77,7 @@ is_valid_value_type(uint8 type)
         || wasm_is_type_reftype(type)
 #elif WASM_ENABLE_REF_TYPES != 0
         || (type == VALUE_TYPE_FUNCREF || type == VALUE_TYPE_EXTERNREF)
+        || type == VALUE_TYPE_EXNREF
 #endif
 #if WASM_ENABLE_SIMD != 0
         || type == VALUE_TYPE_V128 /* 0x7B */

@@ -254,6 +254,8 @@ type2str(uint8 type)
         return "funcref";
     else if (type == VALUE_TYPE_EXTERNREF)
         return "externref";
+    else if (type == VALUE_TYPE_EXNREF)
+        return "exnref";
     else
         return "unknown type";
 }
@@ -270,7 +272,8 @@ is_32bit_type(uint8 type)
 #elif WASM_ENABLE_REF_TYPES != 0
         /* For reference types, we use uint32 index to represent
            the funcref and externref */
-        || type == VALUE_TYPE_FUNCREF || type == VALUE_TYPE_EXTERNREF
+        || type == VALUE_TYPE_FUNCREF || type == VALUE_TYPE_EXTERNREF 
+        || type == VALUE_TYPE_EXNREF
 #endif
     )
         return true;
@@ -9763,6 +9766,7 @@ fail:
 #define POP_V128() TEMPLATE_POP(V128)
 #define POP_FUNCREF() TEMPLATE_POP(FUNCREF)
 #define POP_EXTERNREF() TEMPLATE_POP(EXTERNREF)
+#define POP_EXNREF() TEMPLATE_POP(EXNREF)
 #define POP_STRINGREF() TEMPLATE_POP(STRINGREF)
 #define POP_MEM_OFFSET() TEMPLATE_POP_REF(mem_offset_type)
 
@@ -11512,6 +11516,19 @@ re_scan:
 
                 break;
             }
+            case WASM_OP_THROW_REF:
+            {
+                LOG_REE("In %s, parsing the THROW_REF opcode\n",
+                    __FUNCTION__);
+                /* must be done before checking branch block */
+                SET_CUR_BLOCK_STACK_POLYMORPHIC_STATE(true); 
+
+                POP_EXNREF();
+                RESET_STACK();
+
+                break;
+            }
+
             case WASM_OP_RETHROW:
             {
                 /* must be done before checking branch block */

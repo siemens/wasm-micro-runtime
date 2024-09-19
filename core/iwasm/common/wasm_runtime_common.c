@@ -2961,13 +2961,13 @@ wasm_set_exception(WASMModuleInstance *module_inst, const char *exception)
 #if WASM_ENABLE_RETVALTYPE == 1
 /* mark the returnvalue to be an excnref */
 void
-wasm_set_exnref(WASMModuleInstance *module_inst, void * unused)
+wasm_set_exnref(WASMModuleInstance *module_inst, WASMExceptionReference exnref)
 {
     /* to be alinged with the API, wasm_copy_exception threats it a trap */
     wasm_set_exception_local(module_inst, "uncaught exception reference");
     /* annotate in wasm_module, that there is an exnref on the stack */
     module_inst->returned_value_type = RETVALTYPE_EXNREF;
-    (void) unused;
+    (void) exnref;
 }
 #endif
 

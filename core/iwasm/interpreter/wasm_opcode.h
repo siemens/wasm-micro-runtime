@@ -807,7 +807,7 @@ typedef enum WASMAtomicEXTOpcode {
         HANDLE_OPCODE(WASM_OP_CATCH),                /* 0x07 */ \
         HANDLE_OPCODE(WASM_OP_THROW),                /* 0x08 */ \
         HANDLE_OPCODE(WASM_OP_RETHROW),              /* 0x09 */ \
-        HANDLE_OPCODE(WASM_OP_UNUSED_0x0a),          /* 0x0a */ \
+        HANDLE_OPCODE(WASM_OP_THROW_REF),            /* 0x0a */ \
         HANDLE_OPCODE(WASM_OP_END),                  /* 0x0b */ \
         HANDLE_OPCODE(WASM_OP_BR),                   /* 0x0c */ \
         HANDLE_OPCODE(WASM_OP_BR_IF),                /* 0x0d */ \

@@ -619,19 +619,12 @@ wasm_interp_get_frame_ref(WASMInterpFrame *frame)
 #endif
 #define UNWIND_CSP(N, E)                                               \
     do {                                                               \
-        /* unwind from try_table label to catching label  */           \
-        uint32 cell_num_to_copy;                                       \
-        POP_CSP_CHECK_OVERFLOW(N + 1);                                 \
-        frame_csp -= N;                                                \
+        /* unwind from try_table label to catching label */            \
+        /* add 1 to N, as UNWIND_CSP is called in TRY_TABLE frame */   \
+        POP_CSP_CHECK_OVERFLOW(N+1);                                 \
+        frame_csp -= (N+1);                                            \
         frame_ip = (frame_csp - 1)->target_addr;                       \
-        /* copy arity values of block */                               \
         frame_sp = (frame_csp - 1)->frame_sp;                          \
-        cell_num_to_copy = E->cell_num;                                \
-        if (cell_num_to_copy > 0) {                                    \
-            word_copy(frame_sp, E->vals,                               \
-                      cell_num_to_copy);                               \
-        }                                                              \
-        frame_sp += cell_num_to_copy;                                  \
     } while (0)
 #endif
 
@@ -1709,13 +1702,19 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 unwind_and_find_exception_handler:
                 {
                     /* pop the exnref from the stack */
-                    frame_sp -= 2;
-                    WASMExceptionReference exnref = (void*) GET_REF_FROM_ADDR(frame_sp);
-                    WASMFuncType *tag_type = exnref->tagaddress->is_import_tag ?
-                        exnref->tagaddress->u.tag_import->tag_type :
-                        exnref->tagaddress->u.tag->tag_type;
+                    WASMExceptionReference exnref = POP_I32();
+                    WASMExceptionInstance * exn = get_exn_inst(module, exnref);
+                    if (exn == NULL) {
+                        wasm_set_exception(
+                            module, "WASM_OP_THROW lookup exception instance failed.");
+                        goto got_exception;
+                    }
 
-                    LOG_REE("THROW_REF is looking for try-table frame and catch clauses for exnref %p", exnref);
+                    WASMFuncType *tag_type = exn->tagaddress->is_import_tag ?
+                        exn->tagaddress->u.tag_import->tag_type :
+                        exn->tagaddress->u.tag->tag_type;
+
+                    LOG_REE("THROW_REF is looking for try-table frame and catch clauses for exnref %d exn %p", exnref, exn);
 
                     do {
                         /* pop all values except the exception handler from the stack */
@@ -1765,7 +1764,7 @@ unwind_and_find_exception_handler:
                                             /* these clause have a tagadress */
                                             tagaddress = GET_REF_FROM_ADDR(frame_sp);
                                             frame_sp+=2;
-                                            found_handler = (exnref->tagaddress == tagaddress);
+                                            found_handler = (exn->tagaddress == tagaddress);
                                         }
                                         if (handler_clause == EXCN_HANDLER_CLAUSE_CATCH_ALL || 
                                             handler_clause == EXCN_HANDLER_CLAUSE_CATCH_ALL_REF) {
@@ -1781,22 +1780,36 @@ unwind_and_find_exception_handler:
                                         */
                                         break;
                                     }
-                                    /* branch to label */
-                                    UNWIND_CSP(handler_depth, exnref);
+
+                                    /* branch to label, like WASM_OP_BR
+                                     * add 1 to the depth to pop the TRY_TABLE block too */
+                                    POP_CSP_N(handler_depth+1);
+                                    if (!frame_ip) { /* must be label pushed by WASM_OP_BLOCK */
+                                        if (!wasm_loader_find_block_addr(
+                                                exec_env, (BlockAddr *)exec_env->block_addr_cache,
+                                                (frame_csp - 1)->begin_addr, (uint8 *)-1,
+                                                LABEL_TYPE_BLOCK, &else_addr, &end_addr)) {
+                                            wasm_set_exception(module, "find block address failed");
+                                            goto got_exception;
+                                        }
+                                        frame_ip = end_addr;
+                                    }
+                                    // UNWIND_CSP(handler_depth, exnref);
                                     /* restore destrination sp, lp, ... */
 
                                     /* push values to the new stack */
-                                    word_copy(frame_sp, exnref->vals, tag_type->param_cell_num);
-                                    frame_sp+=tag_type->param_cell_num;
-
+                                    if ((handler_clause == EXCN_HANDLER_CLAUSE_CATCH || handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF)
+                                        && (tag_type->param_cell_num > 0)) {
+                                        word_copy(frame_sp, exn->vals, tag_type->param_cell_num);
+                                        frame_sp+=tag_type->param_cell_num;
+                                    }
 
                                     /* push exnref if clase is of *_REF type */
                                     if (handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF || 
                                         handler_clause == EXCN_HANDLER_CLAUSE_CATCH_ALL_REF) {
-                                        PUT_REF_TO_ADDR(frame_sp, exnref);
-                                        frame_sp += 2;            
+                                        PUSH_I32(exnref);
                                     } else {
-                                        free_exnref(module, exnref);
+                                        free_exn_inst(module, exnref);
                                     }
 
                                     /* continue execution in the block */
@@ -1809,10 +1822,9 @@ unwind_and_find_exception_handler:
                                 LOG_REE("THROW_REF is returning the exnref to the caller");
 
                                 /* push excnref to _caller_ stack */
-                                PUT_REF_TO_ADDR(prev_frame->sp, exnref);
-                                prev_frame->sp += 2;            
+                                PUSH_I32(exnref);
 #if WASM_ENABLE_RETVALTYPE == 1            
-                                wasm_set_exnref(module, (void*)0x0815);
+                                wasm_set_exnref(module, exnref);
                                 goto return_func;
 #endif
                                 break;
@@ -1824,7 +1836,7 @@ unwind_and_find_exception_handler:
 
                         }
                         /* unwind */
-                        POP_CSP();
+                        POP_CSP_N(1);
                     } while (frame_csp > frame->csp_bottom);
                     /* ... */
                     wasm_set_exception(
@@ -1846,25 +1858,32 @@ unwind_and_find_exception_handler:
                 
                 /* create exception instance */
                 LOG_REE("throw tag index %d, ref %p", exception_tag_index, ti);
-                WASMExceptionReference exnref = allocate_exnref(module, ti);
-                if (!exnref) {
+                WASMExceptionReference exnref = allocate_exn_inst(module, ti);
+                if (exnref == NULL_REF) {
                     wasm_set_exception(
                         module, "WASM_OP_THROW allocating an exception instance failed.");
+                    goto got_exception;
+                }
+                WASMExceptionInstance * exn = get_exn_inst(module, exnref);
+                if (exn == NULL) {
+                    wasm_set_exception(
+                        module, "WASM_OP_THROW lookup exception instance failed.");
                     goto got_exception;
                 }
 
                 /* collect tag values */
                 frame_sp-=tag_type->param_cell_num;
-                word_copy(exnref->vals, frame_sp, tag_type->param_cell_num);
-                exnref->cell_num = tag_type->param_cell_num;
+                if (tag_type->param_cell_num > 0) {
+                    word_copy(exn->vals, frame_sp, tag_type->param_cell_num);
+                }
+                exn->cell_num = tag_type->param_cell_num;
 
                 LOG_REE("tag has %d cells, exn has %d cells pushed",
                     tag_type->param_cell_num,
-                    exnref->cell_num);
+                    exn->cell_num);
 
                 /* push excnref to stack */
-                PUT_REF_TO_ADDR(frame_sp, exnref);
-                frame_sp += 2;            
+                PUSH_I32(exnref);
 
                 /* find a try_table and lookup catch clauses */
                 goto unwind_and_find_exception_handler;
@@ -2220,15 +2239,15 @@ unwind_and_find_exception_handler:
                 uint8 * lookup_cursor;
 
                 /* first: read blocktype */
-                // value_type = *frame_ip++;
+                value_type = *frame_ip++;
                 param_cell_num = 0;
-                // cell_num = wasm_value_type_cell_num(value_type);
+                cell_num = wasm_value_type_cell_num(value_type);
 
-                read_leb_uint32(frame_ip, frame_ip_end, type_index);
-                param_cell_num =
-                    ((WASMFuncType *)wasm_types[type_index])->param_cell_num;
-                cell_num =
-                    ((WASMFuncType *)wasm_types[type_index])->ret_cell_num;
+                // read_leb_uint32(frame_ip, frame_ip_end, type_index);
+                //param_cell_num =
+                //    ((WASMFuncType *)wasm_types[type_index])->param_cell_num;
+                //cell_num =
+                //    ((WASMFuncType *)wasm_types[type_index])->ret_cell_num;
 
 
                 /* second: read the clauses count from instruction stream */

@@ -1268,9 +1268,9 @@ wasm_value_type_size_internal(uint8 value_type, uint8 pointer_size)
 #endif
 #if WASM_ENABLE_EXCE_HANDLING != 0
     else if (value_type == VALUE_TYPE_EXNREF)
-        return sizeof(void*);
+        return sizeof(uint32);
     else if (value_type == VALUE_TYPE_TAGREF)
-        return sizeof(void*);
+        return sizeof(uint32);
 #endif
     else {
         bh_assert(0);

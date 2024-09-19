@@ -29,7 +29,7 @@ typedef struct WASMTagInstance WASMTagInstance;
 #endif
 #if WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
 typedef struct WASMExceptionInstance WASMExceptionInstance;
-typedef WASMExceptionInstance * WASMExceptionReference;
+typedef uint32 WASMExceptionReference;
 #endif
 
 
@@ -597,11 +597,14 @@ wasm_lookup_tag(const WASMModuleInstance *module_inst, const char *name,
 #endif
 #endif
 #if WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
+WASMExceptionInstance * 
+get_exn_inst(WASMModuleInstance *module_inst, WASMExceptionReference exnref);
+
 void
-free_exnref(WASMModuleInstance *module_inst, const WASMExceptionReference exn);
+free_exn_inst(WASMModuleInstance *module_inst, const WASMExceptionReference exn);
 
 WASMExceptionReference
-allocate_exnref(WASMModuleInstance *module_inst, WASMTagInstance * ti);
+allocate_exn_inst(WASMModuleInstance *module_inst, WASMTagInstance * ti);
 #endif
 
 bool
@@ -634,7 +637,7 @@ wasm_copy_exception(WASMModuleInstance *module_inst, char *exception_buf);
  * function "wasm_get_retvaltype()" or the various 
  */
 void
-wasm_set_exnref(WASMModuleInstance *module_inst, void * exnref);
+wasm_set_exnref(WASMModuleInstance *module_inst, WASMExceptionReference exnref);
 
 /* get detailed info about the returned wamr-exception 
  * distict, if an exception is 
