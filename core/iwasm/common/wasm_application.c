@@ -581,6 +581,14 @@ execute_func(WASMModuleInstanceCommon *module_inst, const char *name,
             }
 #endif
 #endif /* WASM_ENABLE_GC == 0 && WASM_ENABLE_REF_TYPES != 0 */
+#if WASM_ENABLE_REF_TYPES == 1
+            case VALUE_TYPE_EXNREF:
+            {
+                LOG_REE("using %d as exnref", (uint32)strtoul(argv[i], &endptr, 0));
+                argv1[p++] = (uint32)strtoul(argv[i], &endptr, 0);
+                break;                
+            }
+#endif
             default:
             {
 #if WASM_ENABLE_GC != 0
@@ -771,6 +779,17 @@ execute_func(WASMModuleInstanceCommon *module_inst, const char *name,
                 break;
             }
 #endif /*  WASM_ENABLE_SIMD != 0 */
+#if WASM_ENABLE_REF_TYPES == 1
+            case VALUE_TYPE_EXNREF:
+            {
+                if (argv1[k] != NULL_REF)
+                    os_printf("%" PRIu32 ":ref.exn", argv1[k]);
+                else
+                    os_printf("exnref:ref.null");
+                k++;
+                break;                
+            }
+#endif
             default:
             {
 #if WASM_ENABLE_GC != 0
