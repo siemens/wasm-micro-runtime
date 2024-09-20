@@ -541,6 +541,10 @@ wasm_interp_get_frame_ref(WASMInterpFrame *frame)
 
 #define POP_I32() (--frame_sp, *(int32 *)frame_sp)
 
+#if WASM_ENABLE_EXCE_HANDLING == 1
+#define EXNHANDLER_POP_I32() (*(int32 *)handler_sp++)
+#endif
+
 #define POP_F32() (--frame_sp, *(float32 *)frame_sp)
 
 #define POP_I64() (frame_sp -= 2, GET_I64_FROM_ADDR(frame_sp))
@@ -607,7 +611,6 @@ wasm_interp_get_frame_ref(WASMInterpFrame *frame)
 
 #if WASM_ENABLE_EXCE_HANDLING != 0
 /* unwind the CSP to a given label and optionally modify the labeltype  */
-#if 0
 #define UNWIND_CSP(N, T)                                                   \
     do {                                                                   \
         /* unwind to function frame  */                                    \
@@ -615,23 +618,6 @@ wasm_interp_get_frame_ref(WASMInterpFrame *frame)
         /* drop handlers and values pushd in try block */                  \
         frame_sp = (frame_csp - 1)->frame_sp;                              \
         (frame_csp - 1)->label_type = T ? T : (frame_csp - 1)->label_type; \
-    } while (0)
-#endif
-#define UNWIND_CSP(N)                                                     \
-    do {                                                                  \
-        /* unwind from try_table label to catching label */               \
-        /* add 1 to N, as UNWIND_CSP is called in TRY_TABLE frame */      \
-        POP_CSP_N(N+1);                                                   \
-        if (!frame_ip) {                                                  \
-            if (!wasm_loader_find_block_addr(                             \
-                    exec_env, (BlockAddr *)exec_env->block_addr_cache,    \
-                    (frame_csp - 1)->begin_addr, (uint8 *)-1,             \
-                    (frame_csp - 1)->label_type, &else_addr, &end_addr)) {\
-                wasm_set_exception(module, "find block address failed");  \
-                goto got_exception;                                       \
-            }                                                             \
-            frame_ip = end_addr;                                          \
-        }                                                                 \
     } while (0)
 #endif
 
@@ -1710,23 +1696,24 @@ unwind_and_find_exception_handler:
                 {
                     /* pop the exnref from the stack */
                     WASMExceptionReference exnref = POP_I32();
+
+                    assert(exnref < module->e->exns_count);
+                    assert(module->e->exns[exnref]->refcount > 0);
+
                     WASMExceptionInstance * exn = get_exn_inst(module, exnref);
                     if (exn == NULL) {
+                        /* exnref was either EXNREFNULL 
+                         * or outside the index range of allocated instances 
+                         * or does point to an unallocated exn_inst
+                         */
                         wasm_set_exception(
                             module, "WASM_OP_THROW lookup exception instance failed.");
                         goto got_exception;
                     }
 
-                    WASMFuncType *tag_type = exn->tagaddress->is_import_tag ?
-                        exn->tagaddress->u.tag_import->tag_type :
-                        exn->tagaddress->u.tag->tag_type;
-
                     LOG_REE("THROW_REF is looking for try-table frame and catch clauses for exnref %d exn %p", exnref, exn);
 
                     do {
-                        /* pop all values except the exception handler from the stack */
-                        frame_sp = (frame_csp-1)->frame_sp;
-
                         LOG_REE("frame_csp is a label of type %d", (frame_csp-1)->label_type);
                         switch ((frame_csp-1)->label_type) {
                             case LABEL_TYPE_IF:
@@ -1736,9 +1723,14 @@ unwind_and_find_exception_handler:
                                 break;
                             case LABEL_TYPE_TRY_TABLE:
                                 {
+                                    /* the exception handler data () 
+                                     * is on top of the stack 
+                                     */
+                                    uint32 * handler_sp = (frame_csp-1)->frame_sp;
+
                                     uint32 clause_count = 0;
                                     uint32 handler_clause = 0;
-                                    WASMTagInstance * tagaddress;
+                                    uint32 handler_tagindex = 0;
                                     uint32 handler_depth = 0;
                                                                     
                                     /* pop all values except the exception handler from the stack */
@@ -1747,8 +1739,7 @@ unwind_and_find_exception_handler:
                                     /* frame_sp now points to the exception handler. 
                                     * layout: clause count, [ catch_type [tagaddress]? label ]* 
                                     */
-                                    clause_count = *(int32 *)(frame_sp);
-                                    frame_sp++;
+                                    clause_count = EXNHANDLER_POP_I32(); // 
                                     LOG_REE("there are %d clauses in the handler", clause_count);
                                     
                                     /* if there are no clauses, travel up the stack
@@ -1762,54 +1753,61 @@ unwind_and_find_exception_handler:
                                      * (either the tagaddress is equal or i is an _ALL clause)
                                      */
                                     bool found_handler = false;
+                                    bool catch_clause = false;
+                                    bool all_clause = false;
+                                    bool ref_clause = false;
                                     for (i=0; i < clause_count && !found_handler; i++) {
 
-                                        handler_clause = *(int32 *)(frame_sp);
-                                        frame_sp++;
-                                        if (handler_clause == EXCN_HANDLER_CLAUSE_CATCH || 
-                                            handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF) {
-                                            /* these clause have a tagadress */
-                                            tagaddress = GET_REF_FROM_ADDR(frame_sp);
-                                            frame_sp+=2;
-                                            found_handler = (exn->tagaddress == tagaddress);
+                                        handler_clause = EXNHANDLER_POP_I32(); // LOAD_I32(frame_sp++); // *(int32 *)(frame_sp); frame_sp++;
+                                        catch_clause = handler_clause == EXCN_HANDLER_CLAUSE_CATCH || handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF;
+                                        ref_clause   = handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF || handler_clause == EXCN_HANDLER_CLAUSE_CATCH_ALL_REF;
+                                        all_clause   = handler_clause == EXCN_HANDLER_CLAUSE_CATCH_ALL || handler_clause == EXCN_HANDLER_CLAUSE_CATCH_ALL_REF;
+
+                                        if (!catch_clause && ! all_clause) {
+                                            /* invalid clause, should not happen */
+                                            wasm_set_exception(
+                                                module, "exception handler has an invalid clause");
                                         }
-                                        if (handler_clause == EXCN_HANDLER_CLAUSE_CATCH_ALL || 
-                                            handler_clause == EXCN_HANDLER_CLAUSE_CATCH_ALL_REF) {
-                                            /* these clause are of _ALL_ type  */
-                                            found_handler = true;
+
+                                        if (catch_clause) {                                        
+                                            /* these clauses have an tagindex */
+                                            handler_tagindex = EXNHANDLER_POP_I32(); // LOAD_I32(frame_sp++); // *(int32 *)(frame_sp); frame_sp++;
                                         }
-                                        handler_depth = *(int32 *)(frame_sp);
-                                        frame_sp++;
+                                        /* get target label depth */
+                                        handler_depth = EXNHANDLER_POP_I32(); // LOAD_I32(frame_sp++); // *(int32 *)(frame_sp); frame_sp++;
+
+                                        assert(frame_csp - (handler_depth+1) - 1 >= frame->csp_bottom);
+                                        assert((frame_csp - (handler_depth+1) - 1)->cell_num == exn->cell_num + (ref_clause ? 1 : 0));
+            
+                                        /* check, if either an _ALL_ clause or a _CATCH_ clause and 
+                                         * tagaddresse in exn match the tagadress in clause 
+                                         */
+                                        found_handler = all_clause || (catch_clause && (exn->tagaddress == & module->e->tags[handler_tagindex]));
                                     }
+
                                     if (!found_handler) {
                                         /* break out of case and continue to travel up the
-                                        * csp and search try_table labels
-                                        */
+                                         * csp and search try_table labels
+                                         */
                                         break;
                                     }
 
-                                    /* branch to label, like WASM_OP_BR
-                                     * add 1 to the depth to pop the TRY_TABLE block too */
-                                    UNWIND_CSP(handler_depth);
-                                    /* restore destrination sp, lp, ... */
-
-                                    /* push values to the new stack */
-                                    if ((handler_clause == EXCN_HANDLER_CLAUSE_CATCH || handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF)
-                                        && (tag_type->param_cell_num > 0)) {
-                                        word_copy(frame_sp, exn->vals, tag_type->param_cell_num);
-                                        frame_sp+=tag_type->param_cell_num;
+                                    /* found a catching clause */
+                                    if (catch_clause && exn->cell_num > 0) {
+                                        /* push values to stack */
+                                        word_copy(frame_sp, exn->vals, exn->cell_num);
+                                        frame_sp+=exn->cell_num;
                                     }
-
-                                    /* push exnref if clase is of *_REF type */
-                                    if (handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF || 
-                                        handler_clause == EXCN_HANDLER_CLAUSE_CATCH_ALL_REF) {
+                                    if (ref_clause) {
+                                        /* push the exnref on the stack */
                                         PUSH_I32(exnref);
                                     } else {
                                         free_exn_inst(module, exnref);
                                     }
 
-                                    /* continue execution in the block */
-                                    HANDLE_OP_END();
+                                    /* like BR_TABLE */
+                                    depth = handler_depth+1;
+                                    goto label_pop_csp_n;
                                 }
                                 /* the break is not reached */
                                 break;
@@ -1819,6 +1817,8 @@ unwind_and_find_exception_handler:
 
                                 /* push excnref to _caller_ stack */
                                 PUSH_I32(exnref);
+                                // goto return_func;
+
 #if WASM_ENABLE_RETVALTYPE == 1            
                                 wasm_set_exnref(module, exnref);
                                 goto return_func;
@@ -2232,43 +2232,52 @@ unwind_and_find_exception_handler:
                 uint32 handler_clause;
                 uint32 handler_tagindex;
                 uint32 handler_targetlabel;
-                uint8 * lookup_cursor;
 
                 /* first: read blocktype */
                 value_type = *frame_ip++;
                 param_cell_num = 0;
                 cell_num = wasm_value_type_cell_num(value_type);
 
-                // read_leb_uint32(frame_ip, frame_ip_end, type_index);
-                //param_cell_num =
-                //    ((WASMFuncType *)wasm_types[type_index])->param_cell_num;
-                //cell_num =
-                //    ((WASMFuncType *)wasm_types[type_index])->ret_cell_num;
-
-
                 /* second: read the clauses count from instruction stream */
                 read_leb_int32(frame_ip, frame_ip_end, clause_count);
 
-                /* third: create csp
-                 * clone frame_ip, skip clauses, find block-end, push the csp 
-                 */
-                lookup_cursor = frame_ip;
-                for (i=0; i<clause_count; i++) {
-                    read_leb_int32(lookup_cursor, frame_ip_end, handler_clause);
-                    if (handler_clause == EXCN_HANDLER_CLAUSE_CATCH || 
-                        handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF) {
-                        skip_leb(lookup_cursor); /* skip over tagindex */
-                    }
-                    skip_leb(lookup_cursor); /* skip over label */
+                /* third: create LABEL */
+                cache_index = ((uintptr_t)frame_ip)
+                              & (uintptr_t)(BLOCK_ADDR_CACHE_SIZE - 1);
+                cache_items = exec_env->block_addr_cache[cache_index];
+                if (cache_items[0].start_addr == frame_ip) {
+                    end_addr = cache_items[0].end_addr;
                 }
-                /* lookup_cursor is at first opcode in block */
+                else if (cache_items[1].start_addr == frame_ip) {
+                    end_addr = cache_items[1].end_addr;
+                }
+#if WASM_ENABLE_DEBUG_INTERP != 0
+                else {
+                        /* clone frame_ip, skip clauses, find end_addr  */
+                        uint8 * lookup_cursor = frame_ip;
+                        for (i=0; i<clause_count; i++) {
+                            read_leb_int32(lookup_cursor, frame_ip_end, handler_clause);
+                            if (handler_clause == EXCN_HANDLER_CLAUSE_CATCH || 
+                                handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF) {
+                                skip_leb(lookup_cursor); /* skip over tagindex */
+                            }
+                            skip_leb(lookup_cursor); /* skip over label */
+                        }
+                        /* lookup_cursor is at first opcode in block */
+                        if (!wasm_loader_find_block_addr(
+                                exec_env, (BlockAddr *)exec_env->block_addr_cache,
+                                lookup_cursor, (uint8 *)-1, LABEL_TYPE_TRY_TABLE,
+                                &else_addr, &end_addr);) {
+                        wasm_set_exception(module, "find block address failed");
+                        goto got_exception;
+                    }
+                }
+#endif
+                else {
+                    end_addr = NULL;
+                }
 
-                wasm_loader_find_block_addr(
-                    exec_env, (BlockAddr *)exec_env->block_addr_cache,
-                    lookup_cursor, (uint8 *)-1, LABEL_TYPE_TRY_TABLE,
-                    &else_addr, &end_addr);
-
-                /* push control block */
+                /* push control block. end_addr might be NULL. will be searched in br or unwind_csp */
                 PUSH_CSP(LABEL_TYPE_TRY_TABLE, param_cell_num, cell_num, end_addr);
 
                 /* create exception handler on the stack. layout starts at frame->sp 
@@ -2278,25 +2287,14 @@ unwind_and_find_exception_handler:
                 for (i=0; i<clause_count; i++) {
                     read_leb_int32(frame_ip, frame_ip_end, handler_clause);
                     PUSH_I32(handler_clause);
-
                     if (handler_clause == EXCN_HANDLER_CLAUSE_CATCH || 
                         handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF) {
+                        /* read and push tagindex */
                         read_leb_int32(frame_ip, frame_ip_end, handler_tagindex);
-                        /* get tagaddress */
-                        WASMTagInstance * tagadress = & module->e->tags[handler_tagindex];
-                        LOG_VERBOSE("In %s, found handler clause %d for tagindex %d tagaddress %p\n",
-                            __FUNCTION__,
-                            handler_clause,
-                            handler_tagindex,
-                            tagadress);
-                        PUT_REF_TO_ADDR(frame_sp, tagadress);
-                        frame_sp += 2;                                    
+                        PUSH_I32(handler_tagindex);
                     }
+                    /* read and push targetlabel */
                     read_leb_int32(frame_ip, frame_ip_end, handler_targetlabel);
-                    LOG_VERBOSE("In %s, found handler clause %d targetlabel %d\n",
-                        __FUNCTION__,
-                        handler_clause,
-                        handler_targetlabel);
                     PUSH_I32(handler_targetlabel);
                     /* done */
                 }
