@@ -1097,7 +1097,12 @@ def compile_wast_to_wasm(form, wast_tempfile, wasm_tempfile, opts):
     if opts.gc:
         cmd = [opts.wast2wasm, "-u", "-d", wast_tempfile, "-o", wasm_tempfile]
     elif opts.eh:
-        cmd = [opts.wast2wasm, "--enable-threads", "--no-check", "--enable-exceptions", "--enable-tail-call", wast_tempfile, "-o", wasm_tempfile ]
+        # wat2wasm options
+        # cmd = [opts.wast2wasm, "--enable-threads", "--no-check", "--enable-exceptions", "--enable-tail-call", wast_tempfile, "-o", wasm_tempfile ]
+        # wasm reference interpreter options
+        # -u      unchecked, do not perform validation
+        # -d      dry, do not run program
+        cmd = [opts.wast2wasm, "-u", "-d", wast_tempfile, "-o", wasm_tempfile ]
     elif opts.memory64:
         cmd = [opts.wast2wasm, "--enable-memory64", "--no-check", wast_tempfile, "-o", wasm_tempfile ]
     elif opts.multi_memory:

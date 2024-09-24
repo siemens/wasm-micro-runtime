@@ -148,6 +148,9 @@ def preflight_check(aot_flag, aot_compiler, eh_flag):
         print(f"Can not find {aot_compiler}")
         return False
 
+    if eh_flag and not pathlib.Path(SPEC_INTERPRETER_CMD).resolve().exists():
+        print(f"Can not find {SPEC_INTERPRETER_CMD}")
+        return False
     return True
 
 
@@ -174,7 +177,7 @@ def test_case(
 ):
     CMD = [sys.executable, "runtest.py"]
     CMD.append("--wast2wasm")
-    CMD.append(WAST2WASM_CMD if not gc_flag else SPEC_INTERPRETER_CMD)
+    CMD.append(WAST2WASM_CMD if not gc_flag and not eh_flag else SPEC_INTERPRETER_CMD)
     CMD.append("--interpreter")
     if sgx_flag:
         CMD.append(IWASM_SGX_CMD)
@@ -318,9 +321,10 @@ def test_suite(
         case_list.extend(gc_case_list)
 
     if eh_flag:
+        # use only the wast-files for excnref
         eh_case_list = sorted(suite_path.glob("*.wast"))
-        eh_case_list_include = [test for test in eh_case_list if test.stem in ["throw", "tag", "try_catch", "rethrow", "try_delegate"]]
-        case_list.extend(eh_case_list_include)
+        # case_list_include = [test for test in eh_case_list if test.stem in ["tag", "try_table", "throw", "throw_ref", "imports"]]
+        case_list = [test for test in eh_case_list if test.stem in ["tag", "try_table", "throw", "throw_ref"]]
 
     if multi_memory_flag:
         multi_memory_list = sorted(suite_path.glob("multi-memory/*.wast"))
