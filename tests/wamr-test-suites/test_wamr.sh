@@ -86,8 +86,11 @@ TARGET_LIST=("AARCH64" "AARCH64_VFP" "ARMV7" "ARMV7_VFP" "THUMBV7" "THUMBV7_VFP"
 REQUIREMENT_NAME=""
 # Initialize an empty array for subrequirement IDs
 SUBREQUIREMENT_IDS=()
+# NO_CLEANUP hack
+NO_CLEANUP=0
 
-while getopts ":s:cabgvt:m:MCpSXexwWEPGQF:j:T:r:A:" opt
+# ReE -n: no_cleanup
+while getopts ":s:cabgvt:m:MCpSXexwWPGQF:j:T:r:A:n" opt
 do
     OPT_PARSED="TRUE"
     case $opt in
@@ -226,6 +229,10 @@ do
         A)
         echo "Using wamrc ${OPTARG}"
         WAMRC_CMD=${OPTARG}
+        ;;
+        n)
+        echo "*** NO CLEANUP HACK ***"
+        NO_CLEANUP=1
         ;;
         ?)
         help
@@ -472,8 +479,18 @@ function spec_test()
         pushd spec
 
         # Jun 6, 2023 Merge branch 'upstream' into merge-upstream
-        git reset --hard 51c721661b671bb7dc4b3a3acb9e079b49778d36
-        git apply ../../spec-test-script/exception_handling.patch || exit 1
+        # git reset --hard 51c721661b671bb7dc4b3a3acb9e079b49778d36
+
+        # commit 7e2c27cf90b6faddc3fd83093fe88e6fca7dba0c (HEAD -> main, origin/main, origin/HEAD)
+        # Author: YAMAMOTO Takashi <yamamoto@midokura.com>
+        # Date:   Fri Aug 30 09:23:38 2024 +0900
+        git reset --hard 7e2c27cf90b6faddc3fd83093fe88e6fca7dba0c
+
+        # ReE dont need the patches anymore ?
+        # git apply ../../spec-test-script/exception_handling.patch || exit 1
+
+        # eh requires reference interpreter as wast2wasm, as wabt does not support new eh proposal
+        compile_reference_interpreter
     elif [[ ${ENABLE_GC} == 1 ]]; then
         echo "checkout spec for GC proposal"
 
@@ -607,6 +624,11 @@ function spec_test()
 
     if [[ ${PLATFORM} == "windows" ]]; then
         ARGS_FOR_SPEC_TEST+="--no-pty "
+    fi
+
+    # NO_CLEANUP hack
+    if [[ ${NO_CLEANUP} == 1 ]]; then
+        ARGS_FOR_SPEC_TEST+="--no_clean_up "
     fi
 
     # set log directory
