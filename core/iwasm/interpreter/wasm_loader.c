@@ -11262,17 +11262,13 @@ re_scan:
                     uint32 clause_count;
                     uint32 handler_clause;
                     read_leb_int32(p, p_end, clause_count);
-                    PUSH_I32(); /* exception handler clause count */                    
-
-                    for (i=0; i<clause_count; i++) {
+                    while (clause_count--) {
                         read_leb_int32(p, p_end, handler_clause);
                         if (handler_clause == EXCN_HANDLER_CLAUSE_CATCH || 
                             handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF) {
                             skip_leb_uint32(p, p_end); /* skip over tagindex */
-                            PUSH_I64(); /* TODO: REF_TYPE_ANYREF => REF_TYPE_TAGREF */
                         }
                         skip_leb_uint32(p, p_end); /* skip over label */
-                        PUSH_I32(); /* target label depth */
                     }
                 }
 #endif
@@ -11413,7 +11409,6 @@ re_scan:
 #if WASM_ENABLE_EXCE_HANDLING != 0
             case WASM_OP_THROW:
             {
-                SET_CUR_BLOCK_STACK_POLYMORPHIC_STATE(true);
 
                 BranchBlock *cur_block = loader_ctx->frame_csp - 1;
 
@@ -11468,41 +11463,45 @@ re_scan:
                 param_count = tag_type->param_count;
 #endif
 
-                for (tti = (int32)tag_type->param_count - 1; tti >= 0; tti--) {
+                /* check, if the values on the stack match the params of tag
+                 * only, if stack is not polymorphic
+                 */
+                if (!cur_block->is_stack_polymorphic) {
+                    for (tti = (int32)tag_type->param_count - 1; tti >= 0; tti--) {
 #if WASM_ENABLE_GC != 0
-                    local_type = tag_type->types[tti];
-                    local_idx = tti;
-                    /* Get the wasm_ref_type if the local_type is multibyte
-                       type */
-                    GET_LOCAL_REFTYPE();
+                        local_type = tag_type->types[tti];
+                        local_idx = tti;
+                        /* Get the wasm_ref_type if the local_type is multibyte
+                        type */
+                        GET_LOCAL_REFTYPE();
 #endif
 
-                    if (!check_stack_top_values(
-                            loader_ctx, frame_ref, available_stack_cell,
+                        if (!check_stack_top_values(
+                                loader_ctx, frame_ref, available_stack_cell,
 #if WASM_ENABLE_GC != 0
-                            frame_reftype_map, frame_reftype_map_num,
+                                frame_reftype_map, frame_reftype_map_num,
 #endif
-                            tag_type->types[tti],
+                                tag_type->types[tti],
 #if WASM_ENABLE_GC != 0
-                            &wasm_ref_type,
+                                &wasm_ref_type,
 #endif
-                            error_buf, error_buf_size)) {
-                        snprintf(error_buf, error_buf_size,
-                                 "type mismatch: instruction requires [%s] but "
-                                 "stack has [%s]",
-                                 tag_type->param_count > 0
-                                     ? type2str(tag_type->types[tti])
-                                     : "",
-                                 available_stack_cell > 0
-                                     ? type2str(*(loader_ctx->frame_ref - 1))
-                                     : "");
-                        goto fail;
+                                error_buf, error_buf_size)) {
+                            snprintf(error_buf, error_buf_size,
+                                    "type mismatch: instruction requires [%s] but "
+                                    "stack has [%s]",
+                                    tag_type->param_count > 0
+                                        ? type2str(tag_type->types[tti])
+                                        : "",
+                                    available_stack_cell > 0
+                                        ? type2str(*(loader_ctx->frame_ref - 1))
+                                        : "");
+                            goto fail;
+                        }
+                        frame_ref -= wasm_value_type_cell_num(tag_type->types[tti]);
+                        available_stack_cell -=
+                            wasm_value_type_cell_num(tag_type->types[tti]);
                     }
-                    frame_ref -= wasm_value_type_cell_num(tag_type->types[tti]);
-                    available_stack_cell -=
-                        wasm_value_type_cell_num(tag_type->types[tti]);
-                }
-
+                } /* ! polymorphic */
 #if WASM_ENABLE_GC != 0
                 /* Restore the values */
                 param_reftype_maps = func->func_type->ref_type_maps;
@@ -11512,6 +11511,7 @@ re_scan:
 
                 /* throw is stack polymorphic */
                 (void)label_type;
+                SET_CUR_BLOCK_STACK_POLYMORPHIC_STATE(true);
                 RESET_STACK();
 
                 break;
@@ -12638,7 +12638,8 @@ re_scan:
                 ref_type = read_uint8(p);
 
                 if (ref_type != VALUE_TYPE_FUNCREF
-                    && ref_type != VALUE_TYPE_EXTERNREF) {
+                    && ref_type != VALUE_TYPE_EXTERNREF
+                    && ref_type != VALUE_TYPE_EXNREF) {
                     set_error_buf(error_buf, error_buf_size, "type mismatch");
                     goto fail;
                 }

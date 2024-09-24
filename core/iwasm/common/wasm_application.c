@@ -785,7 +785,7 @@ execute_func(WASMModuleInstanceCommon *module_inst, const char *name,
                 if (argv1[k] != NULL_REF)
                     os_printf("%" PRIu32 ":ref.exn", argv1[k]);
                 else
-                    os_printf("exnref:ref.null");
+                    os_printf("exn:ref.null");
                 k++;
                 break;                
             }

@@ -39,7 +39,6 @@ extern "C" {
 #define VALUE_TYPE_F64 0x7C
 #define VALUE_TYPE_V128 0x7B
 #define VALUE_TYPE_EXNREF 0x69
-#define VALUE_TYPE_TAGREF VALUE_TYPE_EXNREF
 #define VALUE_TYPE_FUNCREF 0x70
 #define VALUE_TYPE_EXTERNREF 0x6F
 #define VALUE_TYPE_VOID 0x40
@@ -1149,6 +1148,7 @@ typedef struct WASMBranchBlock {
     /* in exception handling, label_type needs to be stored to lookup exception
      * handlers */
     uint8 label_type;
+    uint8 * handler_addr;
 #endif
 } WASMBranchBlock;
 
@@ -1268,8 +1268,6 @@ wasm_value_type_size_internal(uint8 value_type, uint8 pointer_size)
 #endif
 #if WASM_ENABLE_EXCE_HANDLING != 0
     else if (value_type == VALUE_TYPE_EXNREF)
-        return sizeof(uint32);
-    else if (value_type == VALUE_TYPE_TAGREF)
         return sizeof(uint32);
 #endif
     else {

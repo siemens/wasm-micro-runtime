@@ -2599,6 +2599,7 @@ wasm_instantiate(WASMModule *module, WASMModuleInstance *parent,
 #if WASM_ENABLE_GC == 0 && WASM_ENABLE_REF_TYPES != 0
                 case VALUE_TYPE_FUNCREF:
                 case VALUE_TYPE_EXTERNREF:
+                case VALUE_TYPE_EXNREF:
 #endif
                     *(int32 *)global_data = global->initial_value.i32;
                     global_data += sizeof(int32);

@@ -507,8 +507,12 @@ wasm_interp_get_frame_ref(WASMInterpFrame *frame)
 
 #if WASM_ENABLE_EXCE_HANDLING != 0
 #define SET_LABEL_TYPE(_label_type) frame_csp->label_type = _label_type
+#define SET_CSP_EXN_HANDLER(_handler_addr) frame_csp->handler_addr = _handler_addr
+#define GET_CSP_EXN_HANDLER(_handler_addr) frame_csp->handler_addr
 #else
 #define SET_LABEL_TYPE(_label_type) (void)0
+#define SET_CSP_EXN_HANDLER(_handler_addr) (void)0
+#define GET_CSP_EXN_HANDLER(_handler_addr) (void*)NULL
 #endif
 
 #if WASM_ENABLE_MEMORY64 != 0
@@ -532,6 +536,7 @@ wasm_interp_get_frame_ref(WASMInterpFrame *frame)
     do {                                                              \
         bh_assert(frame_csp < frame->csp_boundary);                   \
         SET_LABEL_TYPE(_label_type);                                  \
+        SET_CSP_EXN_HANDLER(NULL);                                    \
         frame_csp->cell_num = cell_num;                               \
         frame_csp->begin_addr = frame_ip;                             \
         frame_csp->target_addr = _target_addr;                        \
@@ -1726,20 +1731,22 @@ unwind_and_find_exception_handler:
                                     /* the exception handler data () 
                                      * is on top of the stack 
                                      */
-                                    uint32 * handler_sp = (frame_csp-1)->frame_sp;
+                                    uint32 * handler_addr = GET_CSP_EXN_HANDLER();
+                                    uint32 * handler_end = (frame_csp-1)->begin_addr;
+                                    if (handler_addr == NULL) {
+                                        /* no exn handler installed */
+                                        break;
+                                    }
 
                                     uint32 clause_count = 0;
                                     uint32 handler_clause = 0;
                                     uint32 handler_tagindex = 0;
                                     uint32 handler_depth = 0;
                                                                     
-                                    /* pop all values except the exception handler from the stack */
-                                    // frame_sp = (frame_csp-1)->frame_sp;
-
-                                    /* frame_sp now points to the exception handler. 
+                                    /* handler_addr now points to the exception handler. 
                                     * layout: clause count, [ catch_type [tagaddress]? label ]* 
                                     */
-                                    clause_count = EXNHANDLER_POP_I32(); // 
+                                    read_leb_int32(handler_addr, handler_end, clause_count);
                                     LOG_REE("there are %d clauses in the handler", clause_count);
                                     
                                     /* if there are no clauses, travel up the stack
@@ -1756,9 +1763,9 @@ unwind_and_find_exception_handler:
                                     bool catch_clause = false;
                                     bool all_clause = false;
                                     bool ref_clause = false;
-                                    for (i=0; i < clause_count && !found_handler; i++) {
+                                    while (clause_count--) {
+                                        read_leb_int32(handler_addr, handler_end, handler_clause);
 
-                                        handler_clause = EXNHANDLER_POP_I32(); // LOAD_I32(frame_sp++); // *(int32 *)(frame_sp); frame_sp++;
                                         catch_clause = handler_clause == EXCN_HANDLER_CLAUSE_CATCH || handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF;
                                         ref_clause   = handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF || handler_clause == EXCN_HANDLER_CLAUSE_CATCH_ALL_REF;
                                         all_clause   = handler_clause == EXCN_HANDLER_CLAUSE_CATCH_ALL || handler_clause == EXCN_HANDLER_CLAUSE_CATCH_ALL_REF;
@@ -1771,10 +1778,10 @@ unwind_and_find_exception_handler:
 
                                         if (catch_clause) {                                        
                                             /* these clauses have an tagindex */
-                                            handler_tagindex = EXNHANDLER_POP_I32(); // LOAD_I32(frame_sp++); // *(int32 *)(frame_sp); frame_sp++;
+                                            read_leb_int32(handler_addr, handler_end, handler_tagindex);
                                         }
                                         /* get target label depth */
-                                        handler_depth = EXNHANDLER_POP_I32(); // LOAD_I32(frame_sp++); // *(int32 *)(frame_sp); frame_sp++;
+                                        read_leb_int32(handler_addr, handler_end, handler_depth);
 
                                         assert(frame_csp - (handler_depth+1) - 1 >= frame->csp_bottom);
                                         assert((frame_csp - (handler_depth+1) - 1)->cell_num == exn->cell_num + (ref_clause ? 1 : 0));
@@ -2233,15 +2240,28 @@ unwind_and_find_exception_handler:
                 uint32 handler_tagindex;
                 uint32 handler_targetlabel;
 
-                /* first: read blocktype */
+                /* read blocktype */
                 value_type = *frame_ip++;
                 param_cell_num = 0;
                 cell_num = wasm_value_type_cell_num(value_type);
 
-                /* second: read the clauses count from instruction stream */
-                read_leb_int32(frame_ip, frame_ip_end, clause_count);
+                /* fetch start of exn_handler (the clause count in instruction stream) */
+                uint8 * handler_addr = frame_ip;
 
-                /* third: create LABEL */
+                /* skip over exn_handler in instruction stream */
+                read_leb_int32(frame_ip, frame_ip_end, clause_count);
+                while (clause_count--) {
+                    read_leb_int32(frame_ip, frame_ip_end, handler_clause);
+                    if (handler_clause == EXCN_HANDLER_CLAUSE_CATCH || 
+                        handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF) {
+                        skip_leb(frame_ip); /* skip over tagindex */
+                    }
+                    skip_leb(frame_ip); /* skip over label */
+                }
+
+                /* the frame_ip points to the first instrunction in the block */
+
+                /* lookup end_addr in cache */
                 cache_index = ((uintptr_t)frame_ip)
                               & (uintptr_t)(BLOCK_ADDR_CACHE_SIZE - 1);
                 cache_items = exec_env->block_addr_cache[cache_index];
@@ -2253,20 +2273,10 @@ unwind_and_find_exception_handler:
                 }
 #if WASM_ENABLE_DEBUG_INTERP != 0
                 else {
-                        /* clone frame_ip, skip clauses, find end_addr  */
-                        uint8 * lookup_cursor = frame_ip;
-                        for (i=0; i<clause_count; i++) {
-                            read_leb_int32(lookup_cursor, frame_ip_end, handler_clause);
-                            if (handler_clause == EXCN_HANDLER_CLAUSE_CATCH || 
-                                handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF) {
-                                skip_leb(lookup_cursor); /* skip over tagindex */
-                            }
-                            skip_leb(lookup_cursor); /* skip over label */
-                        }
                         /* lookup_cursor is at first opcode in block */
                         if (!wasm_loader_find_block_addr(
                                 exec_env, (BlockAddr *)exec_env->block_addr_cache,
-                                lookup_cursor, (uint8 *)-1, LABEL_TYPE_TRY_TABLE,
+                                frame_ip, (uint8 *)-1, LABEL_TYPE_TRY_TABLE,
                                 &else_addr, &end_addr);) {
                         wasm_set_exception(module, "find block address failed");
                         goto got_exception;
@@ -2279,25 +2289,9 @@ unwind_and_find_exception_handler:
 
                 /* push control block. end_addr might be NULL. will be searched in br or unwind_csp */
                 PUSH_CSP(LABEL_TYPE_TRY_TABLE, param_cell_num, cell_num, end_addr);
+                /* set handler_addr in branchblock (needed by throw_ref)*/
+                SET_CSP_EXN_HANDLER(handler_addr);
 
-                /* create exception handler on the stack. layout starts at frame->sp 
-                 * layout: clause count, [ catch_type [tagaddress]? label ]* */
-                PUSH_I32(clause_count);
-
-                for (i=0; i<clause_count; i++) {
-                    read_leb_int32(frame_ip, frame_ip_end, handler_clause);
-                    PUSH_I32(handler_clause);
-                    if (handler_clause == EXCN_HANDLER_CLAUSE_CATCH || 
-                        handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF) {
-                        /* read and push tagindex */
-                        read_leb_int32(frame_ip, frame_ip_end, handler_tagindex);
-                        PUSH_I32(handler_tagindex);
-                    }
-                    /* read and push targetlabel */
-                    read_leb_int32(frame_ip, frame_ip_end, handler_targetlabel);
-                    PUSH_I32(handler_targetlabel);
-                    /* done */
-                }
                 HANDLE_OP_END();
             }
 #endif /* end of WASM_ENABLE_EXCE_HANDLING != 0 */
