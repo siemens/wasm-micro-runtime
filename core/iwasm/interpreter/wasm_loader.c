@@ -7006,8 +7006,6 @@ wasm_loader_find_block_addr(WASMExecEnv *exec_env, BlockAddr *block_addr_cache,
 #if WASM_ENABLE_DEBUG_INTERP != 0
     op_break_retry:
 #endif
-        LOG_REE("[0x%x]", opcode);
-
         switch (opcode) {
             case WASM_OP_UNREACHABLE:
             case WASM_OP_NOP:

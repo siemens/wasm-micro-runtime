@@ -18,6 +18,7 @@
 #ifndef LOG_REE
 // #define LOG_REE printf 
 #define LOG_REE LOG_VERBOSE
+// #define LOG_REE(...) LOG_ERROR("TODO: REMOVE LOG_REE IN %s line %d", __FILE__, __LINE__)
 #endif
 /* /ReE TODO Remove */
 
