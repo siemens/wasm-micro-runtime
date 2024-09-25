@@ -1731,8 +1731,8 @@ unwind_and_find_exception_handler:
                                     /* the exception handler data () 
                                      * is on top of the stack 
                                      */
-                                    uint32 * handler_addr = GET_CSP_EXN_HANDLER();
-                                    uint32 * handler_end = (frame_csp-1)->begin_addr;
+                                    uint8 * handler_addr = GET_CSP_EXN_HANDLER();
+                                    uint8 * handler_end = (frame_csp-1)->begin_addr;
                                     if (handler_addr == NULL) {
                                         /* no exn handler installed */
                                         break;
@@ -1774,6 +1774,7 @@ unwind_and_find_exception_handler:
                                             /* invalid clause, should not happen */
                                             wasm_set_exception(
                                                 module, "exception handler has an invalid clause");
+                                            goto got_exception;
                                         }
 
                                         if (catch_clause) {                                        
