@@ -7014,61 +7014,9 @@ wasm_loader_find_block_addr(WASMExecEnv *exec_env, BlockAddr *block_addr_cache,
                 break;
 
 #if WASM_ENABLE_EXCE_HANDLING != 0
-            case WASM_OP_TRY:
-                u8 = read_uint8(p);
-                if (block_nested_depth
-                    < sizeof(block_stack) / sizeof(BlockAddr)) {
-                    block_stack[block_nested_depth].start_addr = p;
-                    block_stack[block_nested_depth].else_addr = NULL;
-                }
-                block_nested_depth++;
-                break;
-            case EXT_OP_TRY:
-                skip_leb_uint32(p, p_end);
-                if (block_nested_depth
-                    < sizeof(block_stack) / sizeof(BlockAddr)) {
-                    block_stack[block_nested_depth].start_addr = p;
-                    block_stack[block_nested_depth].else_addr = NULL;
-                }
-                block_nested_depth++;
-                break;
-            case WASM_OP_CATCH:
-                if (block_nested_depth == 1) {
-                    *p_end_addr = (uint8 *)(p - 1);
-                    /* stop search and return the address of the catch block */
-                    return true;
-                }
-                break;
-            case WASM_OP_CATCH_ALL:
-                if (block_nested_depth == 1) {
-                    *p_end_addr = (uint8 *)(p - 1);
-                    /* stop search and return the address of the catch_all block
-                     */
-                    return true;
-                }
-                break;
             case WASM_OP_THROW:
                 /* skip tag_index */
                 skip_leb(p);
-                break;
-            case WASM_OP_RETHROW:
-                /* skip depth */
-                skip_leb(p);
-                break;
-            case WASM_OP_DELEGATE:
-                if (block_nested_depth == 1) {
-                    *p_end_addr = (uint8 *)(p - 1);
-                    return true;
-                }
-                else {
-                    skip_leb(p);
-                    /* the DELEGATE opcode ends the tryblock, */
-                    block_nested_depth--;
-                    if (block_nested_depth
-                        < sizeof(block_stack) / sizeof(BlockAddr))
-                        block_stack[block_nested_depth].end_addr =
-                            (uint8 *)(p - 1);
-                }
                 break;
             case WASM_OP_TRY_TABLE:
             {
@@ -8246,10 +8194,6 @@ wasm_loader_ctx_init(WASMFunction *func, char *error_buf, uint32 error_buf_size)
               loader_ctx->frame_csp_size, error_buf, error_buf_size)))
         goto fail;
     loader_ctx->frame_csp_boundary = loader_ctx->frame_csp_bottom + 8;
-
-#if WASM_ENABLE_EXCE_HANDLING != 0
-    func->exception_handler_count = 0;
-#endif
 
 #if WASM_ENABLE_FAST_INTERP != 0
     loader_ctx->frame_offset_size = sizeof(int16) * 32;
@@ -9750,10 +9694,7 @@ fail:
 #define PUSH_V128() TEMPLATE_PUSH(V128)
 #define PUSH_FUNCREF() TEMPLATE_PUSH(FUNCREF)
 #define PUSH_EXTERNREF() TEMPLATE_PUSH(EXTERNREF)
-#if WASM_ENABLE_EXCE_HANDLING != 0
 #define PUSH_EXNREF() TEMPLATE_PUSH(EXNREF)
-#define PUSH_TAGREF() TEMPLATE_PUSH(TAGREF)
-#endif
 #define PUSH_REF(Type) TEMPLATE_PUSH_REF(Type)
 #define POP_REF(Type) TEMPLATE_POP_REF(Type)
 #define PUSH_MEM_OFFSET() TEMPLATE_PUSH_REF(mem_offset_type)
@@ -10505,44 +10446,6 @@ fail:
     return NULL;
 }
 
-#if WASM_ENABLE_EXCE_HANDLING != 0
-static BranchBlock *
-check_branch_block_for_delegate(WASMLoaderContext *loader_ctx, uint8 **p_buf,
-                                uint8 *buf_end, char *error_buf,
-                                uint32 error_buf_size)
-{
-    uint8 *p = *p_buf, *p_end = buf_end;
-    BranchBlock *frame_csp_tmp;
-    uint32 depth;
-
-    read_leb_uint32(p, p_end, depth);
-    /*
-     * Note: "delegate 0" means the surrounding block, not the
-     * try-delegate block itself.
-     *
-     * Note: the caller hasn't popped the try-delegate frame yet.
-     */
-    bh_assert(loader_ctx->csp_num > 0);
-    if (loader_ctx->csp_num - 1 <= depth) {
-#if WASM_ENABLE_SPEC_TEST == 0
-        set_error_buf(error_buf, error_buf_size, "unknown delegate label");
-#else
-        set_error_buf(error_buf, error_buf_size, "unknown label");
-#endif
-        goto fail;
-    }
-    frame_csp_tmp = loader_ctx->frame_csp - depth - 2;
-#if WASM_ENABLE_FAST_INTERP != 0
-    emit_br_info(frame_csp_tmp, false);
-#endif
-
-    *p_buf = p;
-    return frame_csp_tmp;
-fail:
-    return NULL;
-}
-#endif /* end of WASM_ENABLE_EXCE_HANDLING != 0 */
-
 static bool
 check_block_stack(WASMLoaderContext *loader_ctx, BranchBlock *block,
                   char *error_buf, uint32 error_buf_size)
@@ -10634,25 +10537,9 @@ check_block_stack(WASMLoaderContext *loader_ctx, BranchBlock *block,
     }
 
     if (available_stack_cell != return_cell_num) {
-#if WASM_ENABLE_EXCE_HANDLING != 0
-        /* testspec: this error message format is expected by try_catch.wast */
-        snprintf(
-            error_buf, error_buf_size, "type mismatch: %s requires [%s]%s[%s]",
-            block->label_type == LABEL_TYPE_TRY
-                    || (block->label_type == LABEL_TYPE_CATCH
-                        && return_cell_num > 0)
-                ? "instruction"
-                : "block",
-            return_cell_num > 0 ? type2str(return_types[0]) : "",
-            " but stack has ",
-            available_stack_cell > 0 ? type2str(*(loader_ctx->frame_ref - 1))
-                                     : "");
-        goto fail;
-#else
         set_error_buf(error_buf, error_buf_size,
                       "type mismatch: stack size does not match block type");
         goto fail;
-#endif
     }
 
     /* Check stack values match return types */
@@ -11089,22 +10976,6 @@ re_scan:
             case WASM_OP_LOOP:            
 #if WASM_ENABLE_EXCE_HANDLING != 0
             case WASM_OP_TRY_TABLE:
-            case WASM_OP_TRY:
-                if (opcode == WASM_OP_TRY) {
-                    /*
-                     * keep track of exception handlers to account for
-                     * memory allocation
-                     */
-                    // func->exception_handler_count++;
-
-                    /*
-                     * try is a block
-                     * do nothing special, but execution continues to
-                     * to handle_op_block_and_loop,
-                     * and that be pushes the csp
-                     */
-                }
-
 #endif
 #if WASM_ENABLE_FAST_INTERP != 0
                 PRESERVE_LOCAL_FOR_BLOCK();
@@ -11203,9 +11074,11 @@ re_scan:
                     }
 #endif
 #if WASM_ENABLE_EXCE_HANDLING != 0
-                if (opcode != WASM_OP_TRY_TABLE) {
-                    *p_org = EXT_OP_BLOCK + (opcode - WASM_OP_BLOCK);
-                }
+                    if (opcode != WASM_OP_TRY_TABLE) {
+                        /* change opcode to EXT_OP_... , but not 
+                         * only if it is a TRY_TABLE. (there is no EXT_OP_TRY_TABLE) */
+                        *p_org = EXT_OP_BLOCK + (opcode - WASM_OP_BLOCK);
+                    }
 #endif
 #endif
                 }
@@ -11267,12 +11140,15 @@ re_scan:
                         if (handler_clause == EXCN_HANDLER_CLAUSE_CATCH || 
                             handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF) {
                             skip_leb_uint32(p, p_end); /* skip over tagindex */
+                            LOG_ERROR("TODO: validate, that tagindex is in bounds");
                         }
                         skip_leb_uint32(p, p_end); /* skip over label */
+                        LOG_ERROR("TODO: validate, label is in bounds");
+
+                        LOG_ERROR("TODO: validate, that tag params match destination block results.");
                     }
                 }
 #endif
-
 
                 /* Pass parameters to block */
                 if (BLOCK_HAS_PARAM(block_type)) {
@@ -11338,11 +11214,6 @@ re_scan:
                             loader_ctx->p_code_compiled;
                     }
                 }
-#if WASM_ENABLE_EXCE_HANDLING != 0
-                else if (opcode == WASM_OP_TRY) {
-                    skip_label();
-                }
-#endif
                 else if (opcode == WASM_OP_IF) {
                     BranchBlock *block = loader_ctx->frame_csp - 1;
                     /* If block has parameters, we should make sure they are in
@@ -11409,7 +11280,6 @@ re_scan:
 #if WASM_ENABLE_EXCE_HANDLING != 0
             case WASM_OP_THROW:
             {
-
                 BranchBlock *cur_block = loader_ctx->frame_csp - 1;
 
                 uint8 label_type = cur_block->label_type;
@@ -11520,152 +11390,38 @@ re_scan:
             {
                 LOG_REE("In %s, parsing the THROW_REF opcode\n",
                     __FUNCTION__);
-                /* must be done before checking branch block */
+             
+                BranchBlock *cur_block = loader_ctx->frame_csp - 1;
+                uint8 *frame_ref = loader_ctx->frame_ref;
+
+
+
+                if (!cur_block->is_stack_polymorphic) {
+
+                    int32 available_stack_cell =
+                        (int32)(loader_ctx->stack_cell_num
+                                - cur_block->stack_cell_num);
+
+                    if (available_stack_cell < 1) {
+                            /* nothing on the stack */
+                            snprintf(error_buf, error_buf_size, "type mismatch");
+                            goto fail;
+                    }
+
+                    if (!check_stack_top_values(
+                        loader_ctx, frame_ref, available_stack_cell,
+                        VALUE_TYPE_EXNREF,
+                        error_buf, error_buf_size)) {
+                        goto fail;
+                    }
+
+                    POP_EXNREF();
+                }
+                /* must be done before checking branch block */            
                 SET_CUR_BLOCK_STACK_POLYMORPHIC_STATE(true); 
 
-                POP_EXNREF();
                 RESET_STACK();
 
-                break;
-            }
-
-            case WASM_OP_RETHROW:
-            {
-                /* must be done before checking branch block */
-                SET_CUR_BLOCK_STACK_POLYMORPHIC_STATE(true);
-
-                /* check the target catching block:  LABEL_TYPE_CATCH */
-                if (!(frame_csp_tmp =
-                          check_branch_block(loader_ctx, &p, p_end, opcode,
-                                             error_buf, error_buf_size)))
-                    goto fail;
-
-                if (frame_csp_tmp->label_type != LABEL_TYPE_CATCH
-                    && frame_csp_tmp->label_type != LABEL_TYPE_CATCH_ALL) {
-                    /* trap according to spectest (rethrow.wast) */
-                    set_error_buf(error_buf, error_buf_size,
-                                  "invalid rethrow label");
-                    goto fail;
-                }
-
-                BranchBlock *cur_block = loader_ctx->frame_csp - 1;
-                uint8 label_type = cur_block->label_type;
-                (void)label_type;
-                /* rethrow is stack polymorphic */
-                RESET_STACK();
-                break;
-            }
-            case WASM_OP_DELEGATE:
-            {
-                /* check  target block is valid */
-                if (!(frame_csp_tmp = check_branch_block_for_delegate(
-                          loader_ctx, &p, p_end, error_buf, error_buf_size)))
-                    goto fail;
-
-                BranchBlock *cur_block = loader_ctx->frame_csp - 1;
-                uint8 label_type = cur_block->label_type;
-
-                (void)label_type;
-                /* DELEGATE ends the block */
-                POP_CSP();
-                break;
-            }
-            case WASM_OP_CATCH:
-            {
-                BranchBlock *cur_block = loader_ctx->frame_csp - 1;
-
-                uint8 label_type = cur_block->label_type;
-                uint32 tag_index = 0;
-                read_leb_int32(p, p_end, tag_index);
-
-                /* check validity of tag_index against module->tag_count */
-                /* check tag index is within the tag index space */
-                if (tag_index >= module->import_tag_count + module->tag_count) {
-                    LOG_REE("In %s, unknown tag at WASM_OP_CATCH\n",
-                                __FUNCTION__);
-                    set_error_buf(error_buf, error_buf_size, "unknown tag");
-                    goto fail;
-                }
-
-                /* the tag_type is stored in either the WASMTag (section tags)
-                 * or WASMTagImport (import tag) */
-                WASMFuncType *func_type = NULL;
-                if (tag_index < module->import_tag_count) {
-                    func_type = module->import_tags[tag_index].u.tag.tag_type;
-                }
-                else {
-                    func_type =
-                        module->tags[tag_index - module->import_tag_count]
-                            ->tag_type;
-                }
-
-                if (func_type->result_count != 0) {
-                    set_error_buf(error_buf, error_buf_size,
-                                  "tag type signature does not return void");
-                    goto fail;
-                }
-
-                /* check validity of current label (expect LABEL_TYPE_TRY or
-                 * LABEL_TYPE_CATCH) */
-                if ((LABEL_TYPE_CATCH != label_type)
-                    && (LABEL_TYPE_TRY != label_type)) {
-                    set_error_buf(error_buf, error_buf_size,
-                                  "Unexpected block sequence encountered.");
-                    goto fail;
-                }
-
-                /*
-                 * replace frame_csp by LABEL_TYPE_CATCH
-                 */
-                cur_block->label_type = LABEL_TYPE_CATCH;
-
-                /* RESET_STACK removes the values pushed in TRY or pervious
-                 * CATCH Blocks */
-                RESET_STACK();
-
-#if WASM_ENABLE_GC != 0
-                WASMRefType *ref_type;
-                uint32 j = 0;
-#endif
-
-                /* push types on the stack according to caught type */
-                for (i = 0; i < func_type->param_count; i++) {
-#if WASM_ENABLE_GC != 0
-                    if (wasm_is_type_multi_byte_type(func_type->types[i])) {
-                        bh_assert(func_type->ref_type_maps[j].index == i);
-                        ref_type = func_type->ref_type_maps[j].ref_type;
-                        bh_memcpy_s(&wasm_ref_type, sizeof(WASMRefType),
-                                    ref_type,
-                                    wasm_reftype_struct_size(ref_type));
-                        j++;
-                    }
-#endif
-                    PUSH_TYPE(func_type->types[i]);
-                }
-                break;
-            }
-            case WASM_OP_CATCH_ALL:
-            {
-                BranchBlock *cur_block = loader_ctx->frame_csp - 1;
-
-                /* expecting a TRY or CATCH, anything else will be considered an
-                 * error */
-                if ((LABEL_TYPE_CATCH != cur_block->label_type)
-                    && (LABEL_TYPE_TRY != cur_block->label_type)) {
-                    set_error_buf(error_buf, error_buf_size,
-                                  "Unexpected block sequence encountered.");
-                    goto fail;
-                }
-
-                /* no immediates */
-                /* replace frame_csp by LABEL_TYPE_CATCH_ALL */
-                cur_block->label_type = LABEL_TYPE_CATCH_ALL;
-
-                /* RESET_STACK removes the values pushed in TRY or pervious
-                 * CATCH Blocks */
-                RESET_STACK();
-
-                /* catch_all has no tagtype and therefore no parameters */
                 break;
             }
 #endif /* end of WASM_ENABLE_EXCE_HANDLING != 0 */
@@ -15881,6 +15637,18 @@ re_scan:
                 break;
             }
 #endif /* end of WASM_ENABLE_SHARED_MEMORY */
+            case WASM_OP_RETHROW:
+            case EXT_OP_TRY:
+            case WASM_OP_TRY:
+            case WASM_OP_CATCH:
+            case WASM_OP_CATCH_ALL:
+            case WASM_OP_DELEGATE:
+            {
+                /* exception handling of old proposal has been removed */
+                set_error_buf_v(error_buf, error_buf_size, 
+                    "only TRY_TABLE style exceptionhandling is implemented");
+                goto fail;
+            }
 
             default:
                 set_error_buf_v(error_buf, error_buf_size, "%s %02x",

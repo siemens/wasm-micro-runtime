@@ -842,9 +842,21 @@ fail:
  * Destroy exception instances.
  */
 static void
-exns_deinstantiate(WASMExceptionInstance *tags)
+exns_deinstantiate(WASMExceptionInstance ** exns, uint32 exns_count)
 {
-/* TBD */
+    for (uint32 i = 0; i < exns_count; i++) {
+        WASMExceptionInstance * exn = exns[i];
+        if (exn->vals != NULL) {
+            wasm_runtime_free(exn->vals);
+        }
+        exn->refcount = 0;
+        exn->cell_num = 0;
+        exn->cell_alloc = 0;
+        exn->vals = NULL;
+        exn->tagaddress = NULL;
+        LOG_REE("free exns[%d]=%p", i, exns[i]);
+    }
+    wasm_runtime_free(exns);
 }
 
 /**
@@ -854,7 +866,7 @@ static WASMExceptionInstance **
 exns_instantiate(const WASMModule *module, WASMModuleInstance *module_inst,
                  char *error_buf, uint32 error_buf_size)
 {
-    int exns_count = module_inst->e->exns_count;
+    uint32 exns_count = module_inst->e->exns_count;
     WASMExceptionInstance ** exns;
     WASMExceptionInstance * exn;
 
@@ -877,7 +889,7 @@ exns_instantiate(const WASMModule *module, WASMModuleInstance *module_inst,
     }
 
     /* initialize the instances, set references */
-    for (int i = 0; i < exns_count; i++, exn++) {
+    for (uint32 i = 0; i < exns_count; i++, exn++) {
         exns[i] = exn;
         exn->refcount = 0;
         exn->cell_num = 0;
@@ -890,6 +902,7 @@ exns_instantiate(const WASMModule *module, WASMModuleInstance *module_inst,
     //module_inst->e->exns = exns;
     LOG_REE("runtime_malloc for %d exception instances success, exns=%p", exns_count, exns);
 
+    (void) module;
     return exns;
 }
 
@@ -918,7 +931,7 @@ WASMExceptionReference allocate_exn_inst(WASMModuleInstance *module_inst, WASMTa
     WASMExceptionInstance * exn = NULL;
     WASMExceptionReference exnref = NULL_REF; /* NULLEXNREF == -1 */
 
-    for (int i = 0; i < module_inst->e->exns_count; i++) {
+    for (uint32 i = 0; i < module_inst->e->exns_count; i++) {
         LOG_REE("exns[%d]=%p", i, module_inst->e->exns[i]);
         if (module_inst->e->exns[i]->refcount == 0) {
     
@@ -3373,6 +3386,10 @@ wasm_deinstantiate(WASMModuleInstance *module_inst, bool is_sub_inst)
     export_functions_deinstantiate(module_inst->export_functions);
 #if WASM_ENABLE_TAGS != 0
     export_tags_deinstantiate(module_inst->e->export_tags);
+#endif
+
+#if WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
+    exns_deinstantiate(module_inst->e->exns, module_inst->e->exns_count);
 #endif
 
 #if WASM_ENABLE_MULTI_MODULE != 0

@@ -706,10 +706,6 @@ struct WASMFunction {
     uint32 type_idx;
 #endif
 
-#if WASM_ENABLE_EXCE_HANDLING != 0
-    uint32 exception_handler_count;
-#endif
-
 #if WASM_ENABLE_FAST_JIT != 0 || WASM_ENABLE_JIT != 0 \
     || WASM_ENABLE_WAMR_COMPILER != 0
     /* Whether function has opcode memory.grow */
