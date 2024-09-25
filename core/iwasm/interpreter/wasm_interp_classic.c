@@ -1711,7 +1711,11 @@ unwind_and_find_exception_handler:
                                     bool catch_clause = false;
                                     bool all_clause = false;
                                     bool ref_clause = false;
+                                    bool catch_matched = false;
                                     while (clause_count--) {
+                                        WASMTag * throwntag = NULL;
+                                        WASMTag * catchedtag = NULL;
+
                                         read_leb_int32(handler_addr, handler_end, handler_clause);
 
                                         catch_clause = handler_clause == EXCN_HANDLER_CLAUSE_CATCH || handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF;
@@ -1728,17 +1732,30 @@ unwind_and_find_exception_handler:
                                         if (catch_clause) {                                        
                                             /* these clauses have an tagindex */
                                             read_leb_int32(handler_addr, handler_end, handler_tagindex);
+
+                                            /* get tag adresses only if catch clause. all clauses do not have tagindex */
+                                            throwntag = exn->tagaddress->is_import_tag ?
+                                                exn->tagaddress->u.tag_import->import_tag_linked :
+                                                exn->tagaddress->u.tag;
+                                            catchedtag = module->e->tags[handler_tagindex].is_import_tag ?
+                                                module->e->tags[handler_tagindex].u.tag_import->import_tag_linked :
+                                                module->e->tags[handler_tagindex].u.tag;
+
+                                            LOG_REE("in catch: throwntag is %p, catched_tag = %p", throwntag, catchedtag);
+                                            
+                                            catch_matched = (throwntag == catchedtag);
                                         }
                                         /* get target label depth */
                                         read_leb_int32(handler_addr, handler_end, handler_depth);
 
                                         assert(frame_csp - (handler_depth+1) - 1 >= frame->csp_bottom);
                                         assert((frame_csp - (handler_depth+1) - 1)->cell_num == exn->cell_num + (ref_clause ? 1 : 0));
-            
+
+
                                         /* check, if either an _ALL_ clause or a _CATCH_ clause and 
                                          * tagaddresse in exn match the tagadress in clause 
                                          */
-                                        found_handler = all_clause || (catch_clause && (exn->tagaddress == & module->e->tags[handler_tagindex]));
+                                        found_handler = all_clause || (catch_clause && catch_matched);
                                     }
 
                                     if (!found_handler) {
