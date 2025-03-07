@@ -1734,12 +1734,18 @@ unwind_and_find_exception_handler:
                                             read_leb_int32(handler_addr, handler_end, handler_tagindex);
 
                                             /* get tag adresses only if catch clause. all clauses do not have tagindex */
+                                            #if WASM_ENABLE_MULTI_MODULE != 0                                            
                                             throwntag = exn->tagaddress->is_import_tag ?
                                                 exn->tagaddress->u.tag_import->import_tag_linked :
                                                 exn->tagaddress->u.tag;
+
                                             catchedtag = module->e->tags[handler_tagindex].is_import_tag ?
                                                 module->e->tags[handler_tagindex].u.tag_import->import_tag_linked :
                                                 module->e->tags[handler_tagindex].u.tag;
+                                            #else // #if WASM_ENABLE_MULTI_MODULE != 0
+                                            throwntag = exn->tagaddress->u.tag;
+                                            catchedtag = module->e->tags[handler_tagindex].u.tag;
+                                            #endif //#if WASM_ENABLE_MULTI_MODULE != 0
 
                                             LOG_REE("in catch: throwntag is %p, catched_tag = %p", throwntag, catchedtag);
                                             
