@@ -630,6 +630,7 @@ bool
 wasm_copy_exception(WASMModuleInstance *module_inst, char *exception_buf);
 
 #if WASM_ENABLE_RETVALTYPE == 1
+#if WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
 
 /* similar to wasm_set_exception, wasm_set_exnref is meant to create an
  * trap "uncaught exception" but marks the traps returnvalue to be of type
@@ -638,6 +639,7 @@ wasm_copy_exception(WASMModuleInstance *module_inst, char *exception_buf);
  */
 void
 wasm_set_exnref(WASMModuleInstance *module_inst, WASMExceptionReference exnref);
+#endif // WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
 
 /* get detailed info about the returned wamr-exception 
  * distict, if an exception is 

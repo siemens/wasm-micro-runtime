@@ -2942,6 +2942,7 @@ wasm_set_exception_local(WASMModuleInstance *module_inst, const char *exception)
     exception_unlock(module_inst);
 }
 
+
 void
 wasm_set_exception(WASMModuleInstance *module_inst, const char *exception)
 {
@@ -2958,7 +2959,10 @@ wasm_set_exception(WASMModuleInstance *module_inst, const char *exception)
     wasm_set_exception_local(module_inst, exception);
 #endif
 }
+
+
 #if WASM_ENABLE_RETVALTYPE == 1
+#if WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
 /* mark the returnvalue to be an excnref */
 void
 wasm_set_exnref(WASMModuleInstance *module_inst, WASMExceptionReference exnref)
@@ -2969,6 +2973,7 @@ wasm_set_exnref(WASMModuleInstance *module_inst, WASMExceptionReference exnref)
     module_inst->returned_value_type = RETVALTYPE_EXNREF;
     (void) exnref;
 }
+#endif //WASM_ENABLE_EXCE_HANDLING != 0 && WASM_ENABLE_TAGS != 0
 #endif
 
 /* clang-format off */
