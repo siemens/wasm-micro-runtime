@@ -11125,7 +11125,7 @@ re_scan:
                 if (opcode == WASM_OP_TRY_TABLE) {
                     /* acording to the spec, the exception handler is below the block values 
                      * parse the clauses and push all the exception handler types to the stack
-                     * so that they are corectly counted.
+                     * so that they are correctly counted.
                      */                    
                     LOG_REE("In %s, parsing the TRY_TABLE opcode\n",
                         __FUNCTION__);
@@ -11137,13 +11137,60 @@ re_scan:
                         read_leb_int32(p, p_end, handler_clause);
                         if (handler_clause == EXCN_HANDLER_CLAUSE_CATCH || 
                             handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF) {
-                            skip_leb_uint32(p, p_end); /* skip over tagindex */
-                            LOG_ERROR("TODO: validate, that tagindex is in bounds");
-                        }
-                        skip_leb_uint32(p, p_end); /* skip over label */
-                        LOG_ERROR("TODO: validate, label is in bounds");
+                            //skip_leb_uint32(p, p_end); /* skip over tagindex */
+                            //LOG_ERROR("TODO: validate, tag index is in bounds");
+                            uint32 tag_index;
+                            read_leb_int32(p,p_end, tag_index); /* read the tag index */
+                            if (tag_index >= module->import_tag_count + module->tag_count) {
+                                set_error_buf(error_buf, error_buf_size, "tag index out of bounds");
+                                goto fail;
+                            }
+        
+                            //LOG_ERROR("TODO: validate, that tag params match destination block results.");
+                            /* Retrieve the tag parameters */
+                            WASMFuncType *tag_type;
+                            if (tag_index < module->import_tag_count) {
+                                tag_type = module->import_tags[tag_index].u.tag.tag_type;
+                            } else {
+                                tag_type = module->tags[tag_index - module->import_tag_count]->tag_type;
+                            }
 
-                        LOG_ERROR("TODO: validate, that tag params match destination block results.");
+                            /* Retrieve the block result types */
+                            BranchBlock *cur_block = loader_ctx->frame_csp - 1;
+                            BlockType *cur_block_type = &cur_block->block_type;
+                            uint8 *block_result_types = NULL;
+                            uint32 block_result_count = 0;
+
+                            if (cur_block_type->is_value_type) {
+                                block_result_count = 1;
+                                block_result_types = &cur_block_type->u.value_type.type;
+                            } else {
+                                block_result_count = cur_block_type->u.type->result_count;
+                                block_result_types = cur_block_type->u.type->types + cur_block_type->u.type->param_count;
+                            }
+
+                            /* Validate the tag parameters against the block result types */
+                            if (tag_type->param_count != block_result_count) {
+                                set_error_buf(error_buf, error_buf_size, "tag parameter count does not match block result count");
+                                goto fail;
+                            }
+
+                            for (uint32 j = 0; j < tag_type->param_count; j++) {
+                                if (tag_type->types[j] != block_result_types[j]) {
+                                    set_error_buf(error_buf, error_buf_size, "tag parameter type does not match block result type");
+                                    goto fail;
+                                }
+                            }                    
+                        }
+                        //skip_leb_uint32(p, p_end); /* skip over label */
+                        //LOG_ERROR("TODO: validate, label is in bounds");
+                        uint32 label_index;
+                        read_leb_uint32(p, p_end, label_index); /* read the label index */
+                        uint32 control_stack_depth = loader_ctx->csp_num;
+                        if(label_index >= control_stack_depth){
+                            set_error_buf(error_buf, error_buf_size, "label index out of bounds");
+                            goto fail;
+                        }
                     }
                 }
 #endif
