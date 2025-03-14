@@ -603,6 +603,8 @@ get_exn_inst(WASMModuleInstance *module_inst, WASMExceptionReference exnref);
 void
 free_exn_inst(WASMModuleInstance *module_inst, const WASMExceptionReference exn);
 
+void
+free_all_exn_inst(WASMModuleInstance *module_inst);
 WASMExceptionReference
 allocate_exn_inst(WASMModuleInstance *module_inst, WASMTagInstance * ti);
 #endif

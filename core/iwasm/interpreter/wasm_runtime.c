@@ -925,6 +925,21 @@ void free_exn_inst(WASMModuleInstance *module_inst, const WASMExceptionReference
     (void) module_inst;
 }
 
+void free_all_exn_inst(WASMModuleInstance *module_inst) {
+    WASMExceptionInstance * exn;
+    for (uint32 i = 0; i < module_inst->e->exns_count; i++) {
+        exn = module_inst->e->exns[i];
+        exn->refcount = 0;
+        exn->cell_num = 0;
+        exn->cell_alloc = 0;
+        if (exn->vals) {
+            wasm_runtime_free(exn->vals);
+        }
+        exn->vals = NULL;
+        exn->tagaddress = NULL;
+    }
+}
+
 WASMExceptionReference allocate_exn_inst(WASMModuleInstance *module_inst, WASMTagInstance * ti) {
     LOG_REE("find unused exception instance, module_inst->e->exns=%p", module_inst->e->exns);
 
@@ -943,9 +958,58 @@ WASMExceptionReference allocate_exn_inst(WASMModuleInstance *module_inst, WASMTa
         }
     }
 
-    if (exnref == NULL_REF) {
-        LOG_REE("no exeption refs left");
-        return NULL_REF;
+    if (exnref == NULL_REF) {        
+        /* increase */
+        uint32 exns_count = module_inst->e->exns_count;
+        uint32 new_exns_count = exns_count + 4; // targeted number of exception instances
+        WASMExceptionInstance ** new_exns;
+        WASMExceptionInstance * new_exn;
+
+        LOG_REE("no exeption refs left, increase from %d to %d", exns_count, new_exns_count);
+        
+        /* allocate references */
+        new_exns = runtime_malloc(sizeof(WASMExceptionInstance*) * new_exns_count,  NULL, 0);
+        if (!new_exns) {
+            LOG_REE("runtime_malloc for exception instances failed");
+            return NULL_REF;
+        }
+
+        /* keep the allocated instances  */
+        for (uint32 i = 0; i < exns_count; i++, exn++) {
+            new_exns[i] = module_inst->e->exns[i];
+        }
+
+        /* allocate a number of exception instances  */
+        new_exn = runtime_malloc(sizeof(WASMExceptionInstance) * (new_exns_count - exns_count), NULL, 0);
+       
+        if (!new_exn) {
+            LOG_REE("runtime_malloc for exception instances failed");
+            wasm_runtime_free(new_exns);
+            return NULL_REF;
+        }
+    
+        /* initialize the instances, set references */
+        for (uint32 i = exns_count; i < new_exns_count; i++, new_exn++) {
+            new_exns[i] = new_exn;
+            new_exn->refcount = 0;
+            new_exn->cell_num = 0;
+            new_exn->cell_alloc = 0;
+            new_exn->vals = NULL;
+            new_exn->tagaddress = NULL;
+        }
+    
+        /* swap the pointers and update the size 
+        * free the now unused pointerlist
+        */
+
+        WASMExceptionInstance ** old_exns = module_inst->e->exns;
+        module_inst->e->exns = new_exns;
+        module_inst->e->exns_count = new_exns_count;
+        wasm_runtime_free(old_exns);
+
+        /* unused ref is the first new allocated one  */
+        exnref = exns_count;
+        exn = module_inst->e->exns[exns_count];        
     }
 
     WASMFuncType *tag_type = ti->is_import_tag ?
