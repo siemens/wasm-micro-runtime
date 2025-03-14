@@ -1055,7 +1055,8 @@ def test_assert_wasmexception(r,opts,form):
     else:
         args = [re.split(' +', v)[1] for v in re.split("\)\s*\(", m.group(2)[1:-1])]
 
-    expected = "Exception: uncaught wasm exception\n"
+    # uncaught exceptions are expected to be returned as exn:ref.null
+    expected = "exn:ref.null\n";
     test_assert(r, opts, "wasmexception", "%s %s" % (func, " ".join(args)), expected)
 
 def do_invoke(r, opts, form):

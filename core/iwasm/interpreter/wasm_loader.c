@@ -11132,66 +11132,98 @@ re_scan:
 
                     uint32 clause_count;
                     uint32 handler_clause;
+
                     read_leb_int32(p, p_end, clause_count);
+                    // LOG_REE("clause_count %d \n",clause_count);
+
                     while (clause_count--) {
+    
+                        /* get the opcode of the clause */
                         read_leb_int32(p, p_end, handler_clause);
-                        if (handler_clause == EXCN_HANDLER_CLAUSE_CATCH || 
-                            handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF) {
-                            //skip_leb_uint32(p, p_end); /* skip over tagindex */
-                            //LOG_ERROR("TODO: validate, tag index is in bounds");
-                            uint32 tag_index;
-                            read_leb_int32(p,p_end, tag_index); /* read the tag index */
+
+                        // LOG_REE("opcode %d \n", handler_clause);
+
+                        /* collect information about the handler type */
+                        bool catch_clause = handler_clause == EXCN_HANDLER_CLAUSE_CATCH || handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF;
+                        bool ref_clause   = handler_clause == EXCN_HANDLER_CLAUSE_CATCH_REF || handler_clause == EXCN_HANDLER_CLAUSE_CATCH_ALL_REF;
+                        bool all_clause   = handler_clause == EXCN_HANDLER_CLAUSE_CATCH_ALL || handler_clause == EXCN_HANDLER_CLAUSE_CATCH_ALL_REF;
+
+                        // LOG_REE("catch_clause %d ref_clause %d all_clause %d\n", catch_clause, ref_clause, all_clause);
+
+                        if (!catch_clause && !all_clause) {
+                            /* invalid clause, should not happen */
+                            set_error_buf(error_buf, error_buf_size, "try_table has an invalid clause opcode");
+                                goto fail;
+                        }
+
+                        uint32 tag_index = 0;
+                        WASMFuncType *tag_type = NULL;
+                        if (catch_clause) {                                        
+                            /* these clauses have an tag index (before the label) */
+                            read_leb_int32(p, p_end, tag_index); 
+
+                            /* verify that tag index is valid */
                             if (tag_index >= module->import_tag_count + module->tag_count) {
                                 set_error_buf(error_buf, error_buf_size, "tag index out of bounds");
                                 goto fail;
                             }
-        
-                            //LOG_ERROR("TODO: validate, that tag params match destination block results.");
-                            /* Retrieve the tag parameters */
-                            WASMFuncType *tag_type;
+
+                            /* get tag_type from either tag list or imported tag list */
                             if (tag_index < module->import_tag_count) {
                                 tag_type = module->import_tags[tag_index].u.tag.tag_type;
                             } else {
                                 tag_type = module->tags[tag_index - module->import_tag_count]->tag_type;
                             }
+                        }
 
-                            /* Retrieve the block result types */
-                            BranchBlock *cur_block = loader_ctx->frame_csp - 1;
-                            BlockType *cur_block_type = &cur_block->block_type;
-                            uint8 *block_result_types = NULL;
-                            uint32 block_result_count = 0;
+                        /* all clauses have a label index */
+                        uint32 label_index;
+                        read_leb_uint32(p, p_end, label_index); /* read the label index */
 
-                            if (cur_block_type->is_value_type) {
-                                block_result_count = 1;
-                                block_result_types = &cur_block_type->u.value_type.type;
-                            } else {
-                                block_result_count = cur_block_type->u.type->result_count;
-                                block_result_types = cur_block_type->u.type->types + cur_block_type->u.type->param_count;
-                            }
+                        /* Retrieve the result type of the targeted block */
+                        BranchBlock *cur_block = loader_ctx->frame_csp - 1 - (label_index+1);
+                        BlockType *cur_block_type = &cur_block->block_type;
+                        uint8 *block_result_types = NULL;
+                        uint32 block_result_count = 0;
+                        
+                        if (cur_block_type->is_value_type) {
+                            block_result_count = 1;
+                            block_result_types = &cur_block_type->u.value_type.type;
+                        } else {
+                            block_result_count = cur_block_type->u.type->result_count;
+                            block_result_types = cur_block_type->u.type->types + cur_block_type->u.type->param_count;
+                        }
 
-                            /* Validate the tag parameters against the block result types */
-                            if (tag_type->param_count != block_result_count) {
+                        if (catch_clause) {
+                            /* if the opcode is CATCH_REF or CATCH_ALL_REF, the exception refernce is expected 
+                             * in addition to the tag params 
+                             */
+                            unsigned int exnref_count = (ref_clause ? 1 : 0);
+
+                            // LOG_REE("tag_type->param_count %d exnref_count %d block_result_count %d\n", tag_type->param_count, exnref_count, block_result_count);
+
+                            /* Validate the tag parameter count against the block result count */
+                            if ((tag_type->param_count + exnref_count) != block_result_count) {
                                 set_error_buf(error_buf, error_buf_size, "tag parameter count does not match block result count");
                                 goto fail;
                             }
-
+                            /* Validate each tag parameter type against the corresponding block result type */
                             for (uint32 j = 0; j < tag_type->param_count; j++) {
                                 if (tag_type->types[j] != block_result_types[j]) {
                                     set_error_buf(error_buf, error_buf_size, "tag parameter type does not match block result type");
                                     goto fail;
                                 }
-                            }                    
-                        }
-                        //skip_leb_uint32(p, p_end); /* skip over label */
-                        //LOG_ERROR("TODO: validate, label is in bounds");
-                        uint32 label_index;
-                        read_leb_uint32(p, p_end, label_index); /* read the label index */
-                        uint32 control_stack_depth = loader_ctx->csp_num;
-                        if(label_index >= control_stack_depth){
-                            set_error_buf(error_buf, error_buf_size, "label index out of bounds");
-                            goto fail;
-                        }
-                    }
+                            }
+                            
+                            /* Validate, that the last parameter of the  block ist an EXNREF */
+                            if (ref_clause) {
+                                if (VALUE_TYPE_EXNREF != block_result_types[block_result_count-1]) {
+                                    set_error_buf(error_buf, error_buf_size, "VALUE_TYPE_EXNREF missing as last param in block result type");
+                                    goto fail;
+                                }
+                            }
+                        } /* catching clause */
+                    } /* clause loop */
                 }
 #endif
 
@@ -11438,8 +11470,6 @@ re_scan:
              
                 BranchBlock *cur_block = loader_ctx->frame_csp - 1;
                 uint8 *frame_ref = loader_ctx->frame_ref;
-
-
 
                 if (!cur_block->is_stack_polymorphic) {
 

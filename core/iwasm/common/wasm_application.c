@@ -689,15 +689,33 @@ execute_func(WASMModuleInstanceCommon *module_inst, const char *name,
     bh_assert(p == (int32)argc1);
 #endif
 
+    bool print_result = true;
     if (!wasm_runtime_call_wasm(exec_env, target_func, argc1, argv1)) {
+#if WASM_ENABLE_RETVALTYPE == 1
+        /* if the module returned and exception, the exception flag
+        * could denote an uncaught exception.
+        * in this case exn:ref.null is returned
+        * the standard result-printer below cannot be used for uncaught exception
+        * because this is not expected from the signature of the called function
+        */
+        if (wasm_runtime_exception_is_exnref(module_inst)) {
+            os_printf("exn:ref.null");
+            /* skip printing the result */
+            print_result = false;        
+        } else {
+#endif                
         goto fail;
-    }
+#if WASM_ENABLE_RETVALTYPE == 1
+        }
+#endif                
+
+}
 
 #if WASM_ENABLE_GC != 0
     ref_type_map = type->result_ref_type_maps;
 #endif
     /* print return value */
-    for (j = 0; j < type->result_count; j++) {
+    for (j = 0; j < type->result_count && print_result; j++) {
         switch (type->types[type->param_count + j]) {
             case VALUE_TYPE_I32:
             {
