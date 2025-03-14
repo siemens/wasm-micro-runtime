@@ -367,6 +367,7 @@ execute_func(WASMModuleInstanceCommon *module_inst, const char *name,
 #if WASM_ENABLE_GC == 0 && WASM_ENABLE_REF_TYPES != 0
     uint32 param_size_in_double_world = 0, result_size_in_double_world = 0;
 #endif
+
     int32 i, p, module_type;
     uint64 total_size;
     char buf[128];
@@ -699,6 +700,9 @@ execute_func(WASMModuleInstanceCommon *module_inst, const char *name,
         * because this is not expected from the signature of the called function
         */
         if (wasm_runtime_exception_is_exnref(module_inst)) {
+            /* threat the situation as excnref return, not as trap */
+            wasm_runtime_set_exception(module_inst, NULL);
+
             os_printf("exn:ref.null");
             /* skip printing the result */
             print_result = false;        
@@ -709,7 +713,7 @@ execute_func(WASMModuleInstanceCommon *module_inst, const char *name,
         }
 #endif                
 
-}
+    }
 
 #if WASM_ENABLE_GC != 0
     ref_type_map = type->result_ref_type_maps;
